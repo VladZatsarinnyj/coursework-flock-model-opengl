@@ -1,0 +1,3 @@
+moderngl>=5.10,<6
+glfw>=2.7,<3
+imgui-bundle>=1.92,<2
