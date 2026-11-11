@@ -9,9 +9,19 @@ import math
 
 # --- Векторы ---
 
+def add(a, b):
+    """Сумма векторов a + b."""
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
 def sub(a, b):
     """Разность векторов a − b."""
     return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def scale(v, k):
+    """Умножение вектора на число."""
+    return (v[0] * k, v[1] * k, v[2] * k)
 
 
 def dot(a, b):
@@ -38,6 +48,14 @@ def normalize(v):
     if n < 1e-9:
         raise ValueError("Нельзя нормировать вектор нулевой длины")
     return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def clamp_length(v, max_length):
+    """Укорачивает вектор до max_length, если он длиннее; направление сохраняется."""
+    n = length(v)
+    if n > max_length:
+        return scale(v, max_length / n)
+    return v
 
 
 # --- Матрицы ---
