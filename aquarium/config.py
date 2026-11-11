@@ -39,6 +39,39 @@ CAMERA_MAX_DISTANCE = 150.0
 MOUSE_ROTATION_SPEED = 0.3  # градусов поворота на пиксель движения мыши
 MOUSE_ZOOM_STEP = 0.9       # во сколько раз меняется расстояние за щелчок колеса
 
+# --- Симуляция ---
+# Стая рассчитывается с постоянным шагом времени, независимо от FPS (см. App.run).
+SIM_DT = 1.0 / 60.0          # шаг симуляции, секунды
+MAX_SIM_STEPS_PER_FRAME = 5  # защита от лавинного отставания на медленном компьютере
+MAX_FRAME_TIME = 0.25        # кадр дольше этого (например, перетаскивание окна) не догоняется
+RANDOM_SEED = 42             # одинаковое начальное состояние стаи при каждом запуске
+
+# --- Стая ---
+FISH_COUNT_DEFAULT = 80
+FISH_COUNT_MIN = 10
+FISH_COUNT_MAX = 300
+FISH_LENGTH = 1.2            # длина модели рыбы
+FISH_MIN_SPEED = 1.5         # рыба не останавливается полностью
+FISH_MAX_ACCELERATION = 8.0  # ограничение суммарной силы правил
+WALL_MARGIN = 2.5            # с какого расстояния до стенки рыба начинает разворачиваться
+WALL_FORCE = 12.0            # сила разворота у самой стенки
+WALL_PADDING = 0.6           # минимальный зазор между центром рыбы и стеклом
+
+# Допустимые значения параметров стаи: используются и ползунками, и проверкой в FlockParams.
+SEPARATION_WEIGHT_RANGE = (0.0, 5.0)
+ALIGNMENT_WEIGHT_RANGE = (0.0, 5.0)
+COHESION_WEIGHT_RANGE = (0.0, 5.0)
+NEIGHBOR_RADIUS_RANGE = (0.5, 8.0)
+MAX_SPEED_RANGE = (2.0, 10.0)
+
+# Окраска рыб: рыба с номером i получает цвет FISH_COLORS[i % len(FISH_COLORS)].
+FISH_COLORS = [
+    (1.00, 0.55, 0.15),  # оранжевый
+    (1.00, 0.75, 0.20),  # золотистый
+    (0.95, 0.40, 0.30),  # коралловый
+    (1.00, 0.85, 0.55),  # светло-жёлтый
+]
+
 # --- Интерфейс ---
 FONT_SIZE = 17.0
 WALL_ALPHA_MIN = 0.0
@@ -56,3 +89,10 @@ class ViewSettings:
     def set_wall_alpha(self, value):
         """Записывает непрозрачность, ограничивая её допустимым диапазоном."""
         self.wall_alpha = max(WALL_ALPHA_MIN, min(WALL_ALPHA_MAX, float(value)))
+
+
+@dataclass
+class SimulationSettings:
+    """Управление симуляцией из панели. В КТ4 сюда добавятся режим движения и корм."""
+
+    paused: bool = False

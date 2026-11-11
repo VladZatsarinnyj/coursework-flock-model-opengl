@@ -1,6 +1,7 @@
 """Приложение: окно, контекст OpenGL, интерфейс и главный цикл."""
 
 import ctypes
+import time
 
 # imgui_bundle импортируется раньше glfw. В imgui_bundle есть своя копия библиотеки
 # GLFW, с которой работает интерфейс, и при импорте он указывает пакету glfw на неё.
@@ -11,20 +12,28 @@ import moderngl
 
 from aquarium import config
 from aquarium.camera import OrbitCamera
+from aquarium.flock import Flock, FlockParams
 from aquarium.renderer import SceneRenderer
 from aquarium.ui import ControlPanel, load_cyrillic_font
 
 
 class FpsCounter:
-    """Считает кадры и раз в полсекунды обновляет FPS и среднее время кадра."""
+    """Раз в полсекунды обновляет FPS, среднее время кадра и среднее время шага симуляции."""
 
     UPDATE_INTERVAL = 0.5  # секунды
 
     def __init__(self):
         self.fps = 0.0
         self.frame_time_ms = 0.0
+        self.step_time_ms = 0.0
         self._frames = 0
         self._elapsed = 0.0
+        self._steps = 0
+        self._steps_duration = 0.0
+
+    def add_simulation_step(self, duration):
+        self._steps += 1
+        self._steps_duration += duration
 
     def add_frame(self, frame_time):
         self._frames += 1
@@ -33,8 +42,12 @@ class FpsCounter:
             # FPS = число кадров / затраченное время. Это то же, что 1 / среднее время кадра.
             self.fps = self._frames / self._elapsed
             self.frame_time_ms = 1000.0 * self._elapsed / self._frames
+            if self._steps > 0:
+                self.step_time_ms = 1000.0 * self._steps_duration / self._steps
             self._frames = 0
             self._elapsed = 0.0
+            self._steps = 0
+            self._steps_duration = 0.0
 
 
 class App:
@@ -54,9 +67,12 @@ class App:
             raise
 
         self.settings = config.ViewSettings()
+        self.simulation = config.SimulationSettings()
+        self.flock = Flock(FlockParams())
         self.camera = OrbitCamera()
         self.panel = ControlPanel(gpu_name=self.ctx.info["GL_RENDERER"])
         self.fps_counter = FpsCounter()
+        self.time_accumulator = 0.0  # время, ещё не «прожитое» симуляцией
 
     def _create_window(self):
         if not glfw.init():
@@ -100,29 +116,59 @@ class App:
             glfw.poll_events()
 
             now = glfw.get_time()
-            self.fps_counter.add_frame(now - previous_time)
+            frame_time = now - previous_time
             previous_time = now
+            self.fps_counter.add_frame(frame_time)
 
             # 2. Новый кадр интерфейса, ввод, панель управления.
             imgui.backends.opengl3_new_frame()
             imgui.backends.glfw_new_frame()
             imgui.new_frame()
             self._handle_mouse()
-            self.panel.draw(self.settings, self.camera, self.fps_counter)
+            self.panel.draw(self.settings, self.simulation, self.flock, self.camera, self.fps_counter)
 
             if self.settings.vsync != applied_vsync:
                 glfw.swap_interval(1 if self.settings.vsync else 0)
                 applied_vsync = self.settings.vsync
 
-            # 3. Сцена, затем интерфейс поверх неё.
+            # 3. Симуляция стаи.
+            self._update_simulation(frame_time)
+
+            # 4. Сцена, затем интерфейс поверх неё.
             width, height = glfw.get_framebuffer_size(self.window)
-            self.renderer.render(self.camera, width, height, self.settings)
+            self.renderer.render(self.camera, width, height, self.settings, self.flock, now)
             imgui.render()
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
 
-            # 4. Показ кадра. Рисование шло в невидимый задний буфер,
+            # 5. Показ кадра. Рисование шло в невидимый задний буфер,
             #    теперь буферы меняются местами (двойная буферизация).
             glfw.swap_buffers(self.window)
+
+    def _update_simulation(self, frame_time):
+        """Продвигает стаю с постоянным шагом SIM_DT.
+
+        Время кадров накапливается, и симуляция делает столько шагов ровно по SIM_DT,
+        сколько уместилось. Поэтому поведение стаи не зависит от FPS: при 30 и при
+        144 кадрах в секунду рыбы проплывают одинаковый путь по одинаковым правилам.
+
+        Если компьютер не успевает, число шагов за кадр ограничено, а лишнее
+        накопленное время отбрасывается. Иначе каждый кадр требовал бы всё больше
+        шагов и программа «застыла» бы.
+        """
+        if self.simulation.paused:
+            self.time_accumulator = 0.0
+            return
+
+        self.time_accumulator += min(frame_time, config.MAX_FRAME_TIME)
+        steps = 0
+        while self.time_accumulator >= config.SIM_DT and steps < config.MAX_SIM_STEPS_PER_FRAME:
+            started = time.perf_counter()
+            self.flock.step(config.SIM_DT)
+            self.fps_counter.add_simulation_step(time.perf_counter() - started)
+            self.time_accumulator -= config.SIM_DT
+            steps += 1
+        if self.time_accumulator >= config.SIM_DT:
+            self.time_accumulator = 0.0
 
     def _handle_mouse(self):
         """Вращение и приближение камеры мышью.
