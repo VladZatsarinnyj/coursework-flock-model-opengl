@@ -5,7 +5,7 @@ import random
 from dataclasses import dataclass
 
 from aquarium import config
-from aquarium.mathutils import add, scale
+from aquarium.mathutils import add, scale, sub
 
 
 @dataclass
@@ -64,6 +64,11 @@ class Scene:
         # Корм — облачко хлопьев: смещения хлопьев от центра выбираются один раз.
         # Это делается последним, чтобы расстановка камней и водорослей не изменилась.
         self.food_offsets = [self._random_offset(config.FOOD_CLUSTER_RADIUS) for _ in range(config.FOOD_FLAKES)]
+        self.food_eaten = [False] * config.FOOD_FLAKES  # какие хлопья текущей порции съедены
+        self.food_time_offset = 0.0    # сдвиг по траектории: новая порция появляется в другом месте
+        self.food_respawn_timer = 0.0  # больше нуля — порция съедена, новая появится через это время
+        self.portion_age = 0.0         # сколько секунд текущая порция находится в аквариуме
+        self.search_times = []         # за сколько секунд стая съела каждую порцию
 
     # --- Размещение на дне ---
 
@@ -259,21 +264,74 @@ class Scene:
         и корм обходит почти весь верхний объём аквариума.
         """
         center, amplitude, frequency = config.FOOD_CENTER, config.FOOD_AMPLITUDE, config.FOOD_FREQUENCY
-        t = self.time
+        t = self.time + self.food_time_offset
         return (center[0] + amplitude[0] * math.sin(frequency[0] * t),
                 center[1] + amplitude[1] * math.sin(frequency[1] * t),
                 center[2] + amplitude[2] * math.cos(frequency[2] * t))
 
-    def food_flakes(self):
-        """Хлопья корма: смещения вращаются вокруг вертикали, облачко «кружится»."""
+    def _flake_positions(self):
+        """Положения всех хлопьев порции: смещения вращаются вокруг вертикали, облачко «кружится»."""
         center = self.food_position()
         angle = config.FOOD_SPIN * self.time
         cos_a, sin_a = math.cos(angle), math.sin(angle)
-        flakes = []
-        for x, y, z in self.food_offsets:
-            rotated = (x * cos_a - z * sin_a, y, x * sin_a + z * cos_a)
-            flakes.append((add(center, rotated), config.FOOD_FLAKE_RADIUS))
-        return flakes
+        return [add(center, (x * cos_a - z * sin_a, y, x * sin_a + z * cos_a)) for x, y, z in self.food_offsets]
+
+    def food_flakes(self):
+        """Несъеденные хлопья для отрисовки: (центр, радиус)."""
+        return [(position, config.FOOD_FLAKE_RADIUS)
+                for position, eaten in zip(self._flake_positions(), self.food_eaten) if not eaten]
+
+    def food_available(self):
+        """True, пока в аквариуме есть порция корма (а не пауза после съедания)."""
+        return self.food_respawn_timer <= 0.0
+
+    def update_food(self, dt, fish_positions):
+        """Кормление; вызывается на каждом шаге симуляции, пока корм включён.
+
+        Рыба, центр которой ближе FOOD_EAT_RADIUS к хлопью, съедает его; за один шаг
+        рыба съедает не больше одного хлопья. Когда съедены все хлопья, порция исчезает,
+        а через FOOD_RESPAWN_DELAY секунд новая появляется дальше по траектории —
+        в другом месте аквариума, и стая плывёт туда.
+        """
+        if not self.food_available():
+            self.food_respawn_timer -= dt
+            if self.food_available():
+                self._new_food_portion()
+            return
+
+        self.portion_age += dt
+        flakes = self._flake_positions()
+        eat_radius_squared = config.FOOD_EAT_RADIUS * config.FOOD_EAT_RADIUS
+        for fish_position in fish_positions:
+            for k, flake in enumerate(flakes):
+                if self.food_eaten[k]:
+                    continue
+                offset = sub(flake, fish_position)
+                if offset[0] ** 2 + offset[1] ** 2 + offset[2] ** 2 < eat_radius_squared:
+                    self.food_eaten[k] = True
+                    break  # одна рыба — одно хлопье за шаг
+
+        if all(self.food_eaten):
+            self.search_times.append(self.portion_age)
+            self.food_respawn_timer = config.FOOD_RESPAWN_DELAY
+
+    def _new_food_portion(self):
+        """Новая порция: перенос вперёд по траектории на случайное время."""
+        self.food_time_offset += self.random.uniform(*config.FOOD_JUMP_RANGE)
+        self.food_eaten = [False] * config.FOOD_FLAKES
+        self.portion_age = 0.0
+
+    def portions_eaten(self):
+        return len(self.search_times)
+
+    def average_search_time(self):
+        """Среднее время от появления порции до её полного съедания, секунды."""
+        if not self.search_times:
+            return 0.0
+        return sum(self.search_times) / len(self.search_times)
+
+    def reset_food_stats(self):
+        self.search_times = []
 
     # --- Шаг времени ---
 

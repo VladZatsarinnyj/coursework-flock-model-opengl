@@ -174,8 +174,11 @@ class App:
         frame_started = time.perf_counter()
         while self.time_accumulator >= config.SIM_DT:
             step_started = time.perf_counter()
-            food = self.scene.food_position() if self.simulation.food_enabled else None
+            food_present = self.simulation.food_enabled and self.scene.food_available()
+            food = self.scene.food_position() if food_present else None
             self.flock.step(config.SIM_DT, self.scene.rocks, self.simulation.avoid_rocks, food)
+            if self.simulation.food_enabled:
+                self.scene.update_food(config.SIM_DT, [fish.position for fish in self.flock.fish])
             self.scene.step(config.SIM_DT)
             step_finished = time.perf_counter()
             self.fps_counter.add_simulation_step(step_finished - step_started)

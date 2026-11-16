@@ -52,7 +52,7 @@ class ControlPanel:
         imgui.begin("Управление", None, imgui.WindowFlags_.always_auto_resize.value)
         self._draw_performance(fps_counter)
         self._draw_flock(simulation, flock)
-        self._draw_modes(simulation, flock)
+        self._draw_modes(simulation, flock, scene)
         self._draw_scene(scene)
         self._draw_view(view)
         self._draw_camera(camera)
@@ -96,23 +96,24 @@ class ControlPanel:
         imgui.text(f"Согласованность движения Φ: {flock.polarization():.2f}")
 
     @staticmethod
-    def _draw_modes(simulation, flock):
+    def _draw_modes(simulation, flock, scene):
         imgui.separator_text("Режимы движения")
         # Режимы — независимые добавки к модели Boids, поэтому это флажки, а не выбор одного из трёх.
-        changed, simulation.avoid_rocks = imgui.checkbox("Обход камней", simulation.avoid_rocks)
-        if changed:
-            flock.reset_contact_stats()  # счётчик должен относиться к одному режиму
+        # При смене режима счётчики сбрасываются: каждое число должно относиться к одному режиму.
+        changed_avoid, simulation.avoid_rocks = imgui.checkbox("Обход камней", simulation.avoid_rocks)
         imgui.same_line()
-        changed, simulation.food_enabled = imgui.checkbox("Корм", simulation.food_enabled)
-        if changed:
-            flock.reset_contact_stats()
+        changed_food, simulation.food_enabled = imgui.checkbox("Корм", simulation.food_enabled)
         params = flock.params
         params.food_weight = _slider("Притяжение к корму", params.food_weight, config.FOOD_WEIGHT_RANGE)
         params.clamp()
         imgui.text(f"Режим: {simulation.mode_name()}")
         imgui.text(f"Касаний камней в минуту: {flock.contacts_per_minute():.1f}")
-        if imgui.button("Сбросить счётчик"):
+        if simulation.food_enabled:
+            imgui.text(f"Съедено порций: {scene.portions_eaten()}")
+            imgui.text(f"Среднее время поиска корма: {scene.average_search_time():.1f} с")
+        if imgui.button("Сбросить счётчики") or changed_avoid or changed_food:
             flock.reset_contact_stats()
+            scene.reset_food_stats()
 
     @staticmethod
     def _draw_scene(scene):

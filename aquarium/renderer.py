@@ -184,7 +184,7 @@ class SceneRenderer:
             self._draw(mesh, color, 1.0)
         self._draw_seaweed(scene)
         self._draw_fish(flock, scene.time)
-        if food_enabled:
+        if food_enabled and scene.food_available():
             self._draw_spheres(self.food, scene.food_flakes(), config.FOOD_COLOR, 1.0)
 
         # Проходы 2–4: прозрачные объекты. Смешивание: цвет = α·новый + (1 − α)·уже_нарисованный.
