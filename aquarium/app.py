@@ -145,7 +145,8 @@ class App:
 
             # 4. Сцена, затем интерфейс поверх неё.
             width, height = glfw.get_framebuffer_size(self.window)
-            self.renderer.render(self.camera, width, height, self.settings, self.flock, self.scene)
+            self.renderer.render(self.camera, width, height, self.settings, self.flock, self.scene,
+                                 self.simulation.food_enabled)
             imgui.render()
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
 
@@ -173,7 +174,8 @@ class App:
         frame_started = time.perf_counter()
         while self.time_accumulator >= config.SIM_DT:
             step_started = time.perf_counter()
-            self.flock.step(config.SIM_DT, self.scene.rocks)
+            food = self.scene.food_position() if self.simulation.food_enabled else None
+            self.flock.step(config.SIM_DT, self.scene.rocks, self.simulation.avoid_rocks, food)
             self.scene.step(config.SIM_DT)
             step_finished = time.perf_counter()
             self.fps_counter.add_simulation_step(step_finished - step_started)

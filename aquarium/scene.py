@@ -1,4 +1,4 @@
-"""Объекты сцены: камни, водоросли, пузырьки. Не использует OpenGL."""
+"""Объекты сцены: камни, водоросли, пузырьки, корм. Не использует OpenGL."""
 
 import math
 import random
@@ -46,7 +46,7 @@ def horizontal_distance(a, b):
 
 
 class Scene:
-    """Камни, водоросли и пузырьки; время сцены и анимация."""
+    """Камни, водоросли, пузырьки и корм; время сцены и анимация."""
 
     def __init__(self):
         self.random = random.Random(config.SCENE_RANDOM_SEED)
@@ -61,6 +61,9 @@ class Scene:
         self.set_rock_count(config.ROCK_COUNT_DEFAULT)
         self.set_seaweed_count(config.SEAWEED_COUNT_DEFAULT)
         self.set_bubble_count(config.BUBBLE_COUNT_DEFAULT)
+        # Корм — облачко хлопьев: смещения хлопьев от центра выбираются один раз.
+        # Это делается последним, чтобы расстановка камней и водорослей не изменилась.
+        self.food_offsets = [self._random_offset(config.FOOD_CLUSTER_RADIUS) for _ in range(config.FOOD_FLAKES)]
 
     # --- Размещение на дне ---
 
@@ -237,6 +240,40 @@ class Scene:
                         bubble.base_z + config.BUBBLE_WOBBLE * math.cos(angle))
             instances.append((position, bubble.radius))
         return instances
+
+    # --- Корм ---
+
+    def _random_offset(self, radius):
+        """Случайная точка внутри шара радиуса radius (метод проб внутри куба)."""
+        while True:
+            offset = tuple(self.random.uniform(-radius, radius) for _ in range(3))
+            if offset[0] ** 2 + offset[1] ** 2 + offset[2] ** 2 <= radius * radius:
+                return offset
+
+    def food_position(self):
+        """Центр корма в текущий момент: фигура Лиссажу.
+
+        По каждой оси — своя синусоида со своей частотой:
+            x = cx + Ax·sin(ωx·t),  y = cy + Ay·sin(ωy·t),  z = cz + Az·cos(ωz·t)
+        Частоты не кратны друг другу, поэтому траектория долго не повторяется
+        и корм обходит почти весь верхний объём аквариума.
+        """
+        center, amplitude, frequency = config.FOOD_CENTER, config.FOOD_AMPLITUDE, config.FOOD_FREQUENCY
+        t = self.time
+        return (center[0] + amplitude[0] * math.sin(frequency[0] * t),
+                center[1] + amplitude[1] * math.sin(frequency[1] * t),
+                center[2] + amplitude[2] * math.cos(frequency[2] * t))
+
+    def food_flakes(self):
+        """Хлопья корма: смещения вращаются вокруг вертикали, облачко «кружится»."""
+        center = self.food_position()
+        angle = config.FOOD_SPIN * self.time
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        flakes = []
+        for x, y, z in self.food_offsets:
+            rotated = (x * cos_a - z * sin_a, y, x * sin_a + z * cos_a)
+            flakes.append((add(center, rotated), config.FOOD_FLAKE_RADIUS))
+        return flakes
 
     # --- Шаг времени ---
 

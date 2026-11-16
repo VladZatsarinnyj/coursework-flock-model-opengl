@@ -69,6 +69,7 @@ COHESION_WEIGHT_RANGE = (0.0, 5.0)
 # Радиус соседства не меньше FISH_PERSONAL_SPACE: столкновения ищутся среди соседей.
 NEIGHBOR_RADIUS_RANGE = (1.0, 8.0)
 MAX_SPEED_RANGE = (2.0, 10.0)
+FOOD_WEIGHT_RANGE = (0.0, 5.0)
 
 # Окраска рыб: рыба с номером i получает цвет FISH_COLORS[i % len(FISH_COLORS)].
 FISH_COLORS = [
@@ -128,6 +129,22 @@ BUBBLE_WOBBLE_FREQUENCY = 3.0    # рад/с
 BUBBLE_COLOR = (0.85, 0.95, 1.00)
 BUBBLE_ALPHA = 0.35
 
+# --- Режимы движения ---
+# Обход препятствий: рыба смотрит вперёд по курсу и заранее отворачивает от камня.
+AVOID_LOOKAHEAD = 3.0   # на сколько вперёд рыба «видит» камни
+AVOID_CLEARANCE = 0.5   # дополнительный запас к радиусу камня при обходе
+AVOID_FORCE = 15.0      # сила поворота, когда камень вплотную
+
+# Корм движется по фигуре Лиссажу: по каждой оси — своя синусоида.
+FOOD_CENTER = (0.0, 7.0, 0.0)
+FOOD_AMPLITUDE = (8.0, 2.0, 4.0)    # размах движения по X, Y, Z
+FOOD_FREQUENCY = (0.25, 0.37, 0.5)  # угловые частоты по X, Y, Z, рад/с
+FOOD_FLAKES = 8                     # корм — облачко хлопьев вокруг центра
+FOOD_CLUSTER_RADIUS = 0.35
+FOOD_FLAKE_RADIUS = 0.08
+FOOD_SPIN = 1.5                     # скорость вращения облачка, рад/с
+FOOD_COLOR = (0.80, 0.45, 0.20)
+
 # --- Интерфейс ---
 FONT_SIZE = 17.0
 WALL_ALPHA_MIN = 0.0
@@ -149,6 +166,24 @@ class ViewSettings:
 
 @dataclass
 class SimulationSettings:
-    """Управление симуляцией из панели. В КТ4 сюда добавятся режим движения и корм."""
+    """Управление симуляцией из панели.
+
+    Режимы движения — это дополнительные силы поверх модели Boids, которые
+    включаются независимо и поэтому сочетаются:
+        оба выключены      — свободное движение;
+        avoid_rocks        — обход препятствий;
+        food_enabled       — сбор стаи у движущегося корма.
+    """
 
     paused: bool = False
+    avoid_rocks: bool = False
+    food_enabled: bool = False
+
+    def mode_name(self):
+        if self.food_enabled and self.avoid_rocks:
+            return "сбор у корма с обходом камней"
+        if self.food_enabled:
+            return "сбор у корма"
+        if self.avoid_rocks:
+            return "обход препятствий"
+        return "свободное движение"

@@ -23,6 +23,7 @@ class FlockParams:
     cohesion_weight: float = 0.8    # сплочённость: держаться центра соседей
     neighbor_radius: float = 3.0    # кого рыба считает соседями
     max_speed: float = 4.0          # единиц сцены в секунду
+    food_weight: float = 1.5        # притяжение к корму (действует, если корм включён)
 
     def clamp(self):
         """Приводит все параметры к допустимым диапазонам из config."""
@@ -31,6 +32,7 @@ class FlockParams:
         self.cohesion_weight = _clamp(self.cohesion_weight, config.COHESION_WEIGHT_RANGE)
         self.neighbor_radius = _clamp(self.neighbor_radius, config.NEIGHBOR_RADIUS_RANGE)
         self.max_speed = _clamp(self.max_speed, config.MAX_SPEED_RANGE)
+        self.food_weight = _clamp(self.food_weight, config.FOOD_WEIGHT_RANGE)
 
 
 @dataclass
@@ -50,6 +52,10 @@ class Flock:
         # Область, в которой может находиться центр рыбы: аквариум минус зазор до стекла.
         self.low = add(config.AQUARIUM_MIN, (config.WALL_PADDING,) * 3)
         self.high = sub(config.AQUARIUM_MAX, (config.WALL_PADDING,) * 3)
+        # Счётчик касаний камней — показатель для сравнения режимов движения.
+        self.rock_contacts = 0
+        self.contact_time = 0.0     # модельное время, за которое накоплен счётчик, секунды
+        self._touching = set()      # номера рыб, касавшихся камня на прошлом шаге
         self.set_count(config.FISH_COUNT_DEFAULT)
 
     # --- Состав стаи ---
@@ -70,15 +76,21 @@ class Flock:
             self.fish.append(self._random_fish())
         del self.fish[count:]
         self.neighbors = [[] for _ in self.fish]
+        self._touching = set()
 
     def respawn(self):
         """Раскладывает всех рыб заново в случайные места."""
         self.fish = [self._random_fish() for _ in self.fish]
+        self._touching = set()
 
     # --- Шаг симуляции ---
 
-    def step(self, dt, rocks=()):
-        """Продвигает стаю на время dt. rocks — камни сцены (scene.Rock).
+    def step(self, dt, rocks=(), avoid_rocks=False, food=None):
+        """Продвигает стаю на время dt.
+
+        rocks       — камни сцены (scene.Rock); непроницаемы в любом режиме;
+        avoid_rocks — режим «обход препятствий»: заранее отворачивать от камней;
+        food        — положение корма или None, если корм выключен.
 
         Шаг выполняется в две фазы. Сначала по положению стаи на текущий момент
         вычисляются ускорения ВСЕХ рыб, затем все рыбы перемещаются. Если бы рыбы
@@ -88,27 +100,38 @@ class Flock:
         positions = [fish.position for fish in self.fish]
         self.neighbors = find_neighbors_naive(positions, self.params.neighbor_radius)
 
-        accelerations = [self._acceleration(i) for i in range(len(self.fish))]
+        accelerations = [self._acceleration(i, rocks, avoid_rocks, food) for i in range(len(self.fish))]
 
-        for fish, acceleration in zip(self.fish, accelerations):
+        touching = set()
+        for i, (fish, acceleration) in enumerate(zip(self.fish, accelerations)):
             # Полунеявный метод Эйлера: сначала скорость, затем положение по новой скорости.
             velocity = add(fish.velocity, scale(acceleration, dt))
             fish.velocity = self._limit_speed(velocity)
             fish.position = add(fish.position, scale(fish.velocity, dt))
-            self._keep_out_of_rocks(fish, rocks)
+            if self._keep_out_of_rocks(fish, rocks):
+                touching.add(i)
             self._keep_inside(fish)  # последней, чтобы рыба гарантированно осталась в аквариуме
 
-    def _acceleration(self, i):
+        # Касание считается один раз — в момент, когда рыба впервые упёрлась в камень,
+        # а не на каждом шаге, пока она скользит по его поверхности.
+        self.rock_contacts += len(touching - self._touching)
+        self._touching = touching
+        self.contact_time += dt
+
+    def _acceleration(self, i, rocks, avoid_rocks, food):
         """Сумма сил, действующих на рыбу i (ускорение, единиц/с²).
 
-        Поведение — три правила стаи для соседей j рыбы i (их n штук):
+        Поведение — три правила стаи для соседей j рыбы i (их n штук) и корм:
             разделение  s = Σ (pᵢ − pⱼ) / |pᵢ − pⱼ|²  — от каждого соседа, сильнее вблизи
             выравнивание a = (Σ vⱼ) / n − vᵢ           — к средней скорости соседей
             сплочённость c = (Σ pⱼ) / n − pᵢ           — к центру соседей
-            F_правил = w_s·s + w_a·a + w_c·c,          |F_правил| ≤ FISH_MAX_ACCELERATION
+            корм         f — см. _seek
+            F_правил = w_s·s + w_a·a + w_c·c + w_f·f,  |F_правил| ≤ FISH_MAX_ACCELERATION
 
-        Физические ограничения — не зависят от весов и не урезаются ограничением выше:
-            F = F_правил + F_стенок + F_столкновений
+        Физические ограничения и обход камней не зависят от весов и не урезаются:
+            F = F_правил + F_стенок + F_столкновений + F_обхода
+        Обход стоит вне ограничения по той же причине: при большой сплочённости
+        он иначе мог бы не успеть отвернуть рыбу.
 
         Почему ограничения добавляются после урезания: при большой сплочённости
         урезание уменьшило бы все слагаемые пропорционально, и отталкивание
@@ -144,8 +167,70 @@ class Flock:
             rules = add(rules, scale(alignment, params.alignment_weight))
             rules = add(rules, scale(cohesion, params.cohesion_weight))
 
+        if food is not None:
+            rules = add(rules, scale(self._seek(fish, food), params.food_weight))
+
         rules = clamp_length(rules, config.FISH_MAX_ACCELERATION)
-        return add(add(rules, self._wall_force(fish.position)), collision)
+        total = add(add(rules, self._wall_force(fish.position)), collision)
+        if avoid_rocks:
+            total = add(total, self._avoidance_force(fish, rocks))
+        return total
+
+    def _seek(self, fish, target):
+        """Стремление к цели (поведение seek, Reynolds, 1999).
+
+        Желаемая скорость направлена на цель и равна максимальной; сила —
+        разница между желаемой и текущей скоростью:
+            desired = (target − p) / |target − p| · v_max,   f = desired − v
+        Так рыба не просто получает толчок к корму, а поворачивает свою скорость к нему.
+        """
+        to_target = sub(target, fish.position)
+        distance = length(to_target)
+        if distance < 1e-9:
+            return (0.0, 0.0, 0.0)
+        desired = scale(to_target, self.params.max_speed / distance)
+        return sub(desired, fish.velocity)
+
+    @staticmethod
+    def _avoidance_force(fish, rocks):
+        """Упреждающий обход камней (obstacle avoidance, Reynolds, 1999).
+
+        Рыба смотрит вперёд вдоль направления движения f = v/|v|. Для каждого камня
+        с центром c и радиусом безопасности R' = R + зазор + запас:
+            t = (c − p)·f        — проекция: насколько впереди лежит ближайшая к центру точка луча;
+            q = p + t·f          — эта точка луча;
+            |q − c|              — расстояние от центра камня до луча.
+        Если камень впереди (t > 0), не дальше AVOID_LOOKAHEAD от рыбы и |q − c| < R',
+        луч задевает камень. Из таких камней берётся ближайший (меньшее t).
+
+        Сила направлена от центра камня к точке q — поперёк курса — и растёт по мере
+        приближения:  F = F_обх · (1 − s / L) · (q − c)/|q − c|,  s = max(0, t − R').
+        Если камень точно по курсу (q ≈ c), рыба отворачивает вверх: камни лежат на дне.
+        """
+        speed = length(fish.velocity)
+        if speed < 1e-9:
+            return (0.0, 0.0, 0.0)
+        forward = scale(fish.velocity, 1.0 / speed)
+
+        nearest = None  # (t, R', q − c) ближайшего камня на пути
+        for rock in rocks:
+            safe_radius = rock.radius + config.FISH_ROCK_PADDING + config.AVOID_CLEARANCE
+            t = dot(sub(rock.center, fish.position), forward)
+            if t <= 0.0 or t - safe_radius > config.AVOID_LOOKAHEAD:
+                continue  # камень позади или слишком далеко
+            closest = add(fish.position, scale(forward, t))
+            offset = sub(closest, rock.center)
+            if dot(offset, offset) >= safe_radius * safe_radius:
+                continue  # луч проходит мимо камня
+            if nearest is None or t < nearest[0]:
+                nearest = (t, safe_radius, offset)
+
+        if nearest is None:
+            return (0.0, 0.0, 0.0)
+        t, safe_radius, offset = nearest
+        direction = (0.0, 1.0, 0.0) if length(offset) < 1e-6 else scale(offset, 1.0 / length(offset))
+        distance_to_surface = max(0.0, t - safe_radius)
+        return scale(direction, config.AVOID_FORCE * (1.0 - distance_to_surface / config.AVOID_LOOKAHEAD))
 
     @staticmethod
     def _collision_force(away, distance):
@@ -218,7 +303,9 @@ class Flock:
             v ← v − (v·n)·n
         Остаётся скольжение вдоль поверхности камня. Камни внизу, поэтому рыбы,
         плывущие выше всех камней, не проверяются.
+        Возвращает True, если рыбу пришлось вытолкнуть (рыба касается камня).
         """
+        touched = False
         for rock in rocks:
             min_distance = rock.radius + config.FISH_ROCK_PADDING
             if fish.position[1] > rock.center[1] + min_distance:
@@ -232,8 +319,21 @@ class Flock:
             inward = dot(fish.velocity, normal)
             if inward < 0.0:
                 fish.velocity = sub(fish.velocity, scale(normal, inward))
+            touched = True
+        return touched
 
     # --- Показатели стаи (для панели и исследования) ---
+
+    def reset_contact_stats(self):
+        self.rock_contacts = 0
+        self.contact_time = 0.0
+        self._touching = set()
+
+    def contacts_per_minute(self):
+        """Касаний камней в минуту модельного времени с последнего сброса счётчика."""
+        if self.contact_time <= 0.0:
+            return 0.0
+        return 60.0 * self.rock_contacts / self.contact_time
 
     def average_neighbor_count(self):
         if not self.fish:

@@ -52,6 +52,7 @@ class ControlPanel:
         imgui.begin("Управление", None, imgui.WindowFlags_.always_auto_resize.value)
         self._draw_performance(fps_counter)
         self._draw_flock(simulation, flock)
+        self._draw_modes(simulation, flock)
         self._draw_scene(scene)
         self._draw_view(view)
         self._draw_camera(camera)
@@ -93,6 +94,25 @@ class ControlPanel:
 
         imgui.text(f"Среднее число соседей: {flock.average_neighbor_count():.1f}")
         imgui.text(f"Согласованность движения Φ: {flock.polarization():.2f}")
+
+    @staticmethod
+    def _draw_modes(simulation, flock):
+        imgui.separator_text("Режимы движения")
+        # Режимы — независимые добавки к модели Boids, поэтому это флажки, а не выбор одного из трёх.
+        changed, simulation.avoid_rocks = imgui.checkbox("Обход камней", simulation.avoid_rocks)
+        if changed:
+            flock.reset_contact_stats()  # счётчик должен относиться к одному режиму
+        imgui.same_line()
+        changed, simulation.food_enabled = imgui.checkbox("Корм", simulation.food_enabled)
+        if changed:
+            flock.reset_contact_stats()
+        params = flock.params
+        params.food_weight = _slider("Притяжение к корму", params.food_weight, config.FOOD_WEIGHT_RANGE)
+        params.clamp()
+        imgui.text(f"Режим: {simulation.mode_name()}")
+        imgui.text(f"Касаний камней в минуту: {flock.contacts_per_minute():.1f}")
+        if imgui.button("Сбросить счётчик"):
+            flock.reset_contact_stats()
 
     @staticmethod
     def _draw_scene(scene):

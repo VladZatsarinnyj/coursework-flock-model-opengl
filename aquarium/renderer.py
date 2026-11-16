@@ -97,7 +97,7 @@ class InstancedMesh:
 class SceneRenderer:
     """Рисует кадр в фиксированном порядке.
 
-    1. Непрозрачные объекты с записью глубины: дно, камни, водоросли, рыбы.
+    1. Непрозрачные объекты с записью глубины: дно, камни, водоросли, рыбы, корм.
     2. Дальние стенки: полупрозрачные, без записи глубины.
     3. Пузырьки — полупрозрачные объекты внутри аквариума.
     4. Ближние стенки.
@@ -111,12 +111,12 @@ class SceneRenderer:
         self.ctx = ctx
         self.lit = load_program(ctx, "lit", "lit")
         self.unlit = load_program(ctx, "unlit", "unlit")
-        # У рыб, водорослей и пузырьков свои вершинные шейдеры и общий фрагментный.
+        # У рыб, водорослей и сфер (пузырьков и корма) свои вершинные шейдеры и общий фрагментный.
         self.fish_program = load_program(ctx, "fish", "lit")
         self.seaweed_program = load_program(ctx, "seaweed", "lit")
-        self.bubble_program = load_program(ctx, "bubble", "lit")
-        self.programs = [self.lit, self.unlit, self.fish_program, self.seaweed_program, self.bubble_program]
-        self.lit_programs = [self.lit, self.fish_program, self.seaweed_program, self.bubble_program]
+        self.sphere_program = load_program(ctx, "bubble", "lit")
+        self.programs = [self.lit, self.unlit, self.fish_program, self.seaweed_program, self.sphere_program]
+        self.lit_programs = [self.lit, self.fish_program, self.seaweed_program, self.sphere_program]
 
         low, high = config.AQUARIUM_MIN, config.AQUARIUM_MAX
         floor_low = (low[0], low[1] - FLOOR_OFFSET, low[2])
@@ -135,9 +135,16 @@ class SceneRenderer:
             max_instances=config.SEAWEED_COUNT_RANGE[1] * config.SEAWEED_SEGMENTS_RANGE[1],
         )
         self.bubbles = InstancedMesh(
-            ctx, self.bubble_program, geometry.unit_sphere(),
+            ctx, self.sphere_program, geometry.unit_sphere(),
             "3f 1f", ("in_center", "in_radius"),
             max_instances=config.BUBBLE_COUNT_RANGE[1],
+        )
+        # Корм рисуется той же моделью сферы, но со своим буфером экземпляров:
+        # данные пузырьков и корма в одном кадре не должны затирать друг друга.
+        self.food = InstancedMesh(
+            ctx, self.sphere_program, geometry.unit_sphere(),
+            "3f 1f", ("in_center", "in_radius"),
+            max_instances=config.FOOD_FLAKES,
         )
 
         # Камни неподвижны, и у каждого своя форма. Их сетки строятся заново
@@ -147,7 +154,7 @@ class SceneRenderer:
 
         self.light_direction = normalize(config.LIGHT_DIRECTION)
 
-    def render(self, camera, width, height, settings, flock, scene):
+    def render(self, camera, width, height, settings, flock, scene, food_enabled):
         if width == 0 or height == 0:
             return  # окно свёрнуто: рисовать некуда
 
@@ -177,6 +184,8 @@ class SceneRenderer:
             self._draw(mesh, color, 1.0)
         self._draw_seaweed(scene)
         self._draw_fish(flock, scene.time)
+        if food_enabled:
+            self._draw_spheres(self.food, scene.food_flakes(), config.FOOD_COLOR, 1.0)
 
         # Проходы 2–4: прозрачные объекты. Смешивание: цвет = α·новый + (1 − α)·уже_нарисованный.
         ctx.enable_only(moderngl.DEPTH_TEST | moderngl.BLEND | moderngl.CULL_FACE)
@@ -191,7 +200,7 @@ class SceneRenderer:
         # Пузырьки — между дальними и ближними стенками. Отсекаются задние половинки
         # сфер, чтобы пузырёк не смешивался сам с собой.
         ctx.cull_face = "back"
-        self._draw_bubbles(scene)
+        self._draw_spheres(self.bubbles, scene.bubble_instances(), config.BUBBLE_COLOR, config.BUBBLE_ALPHA)
         self._draw(self.walls, config.GLASS_COLOR, settings.wall_alpha)
         # Запись глубины обязательно включается обратно: очистка буфера глубины
         # в начале следующего кадра тоже подчиняется этой маске.
@@ -239,17 +248,16 @@ class SceneRenderer:
         program["u_fish_length"].value = config.FISH_LENGTH
         self.fish.render()
 
-    def _draw_bubbles(self, scene):
+    def _draw_spheres(self, mesh, spheres, color, alpha):
+        """Рисует набор сфер (центр, радиус) одного цвета: пузырьки или хлопья корма."""
         data = []
-        for center, radius in scene.bubble_instances():
+        for center, radius in spheres:
             data.extend(center)
             data.append(radius)
-        self.bubbles.update(data)
-
-        program = self.bubble_program
-        program["u_color"].value = config.BUBBLE_COLOR
-        program["u_alpha"].value = config.BUBBLE_ALPHA
-        self.bubbles.render()
+        mesh.update(data)
+        mesh.program["u_color"].value = color
+        mesh.program["u_alpha"].value = alpha
+        mesh.render()
 
     @staticmethod
     def _draw(mesh, color, alpha):
@@ -259,7 +267,7 @@ class SceneRenderer:
 
     def release(self):
         """Освобождает видеопамять. Вызывается до уничтожения контекста OpenGL."""
-        for mesh in (self.floor, self.walls, self.edges, self.fish, self.seaweed, self.bubbles):
+        for mesh in (self.floor, self.walls, self.edges, self.fish, self.seaweed, self.bubbles, self.food):
             mesh.release()
         for mesh, _ in self.rock_meshes:
             mesh.release()
