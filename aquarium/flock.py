@@ -77,8 +77,8 @@ class Flock:
 
     # --- Шаг симуляции ---
 
-    def step(self, dt):
-        """Продвигает стаю на время dt.
+    def step(self, dt, rocks=()):
+        """Продвигает стаю на время dt. rocks — камни сцены (scene.Rock).
 
         Шаг выполняется в две фазы. Сначала по положению стаи на текущий момент
         вычисляются ускорения ВСЕХ рыб, затем все рыбы перемещаются. Если бы рыбы
@@ -95,7 +95,8 @@ class Flock:
             velocity = add(fish.velocity, scale(acceleration, dt))
             fish.velocity = self._limit_speed(velocity)
             fish.position = add(fish.position, scale(fish.velocity, dt))
-            self._keep_inside(fish)
+            self._keep_out_of_rocks(fish, rocks)
+            self._keep_inside(fish)  # последней, чтобы рыба гарантированно осталась в аквариуме
 
     def _acceleration(self, i):
         """Сумма сил, действующих на рыбу i (ускорение, единиц/с²).
@@ -163,15 +164,18 @@ class Flock:
     def _wall_force(self, position):
         """Мягкий разворот у стенок.
 
-        Пока рыба дальше WALL_MARGIN от стенки, сила равна нулю. Ближе — сила
+        Пока рыба дальше полосы margin от стенки, сила равна нулю. Ближе — сила
         направлена от стенки и растёт линейно: у самой границы она равна WALL_FORCE.
+        У дна полоса уже (FLOOR_MARGIN), чем у стёкол и поверхности (WALL_MARGIN):
+        рыбы плавают и у дна, среди камней и водорослей.
         """
         force = [0.0, 0.0, 0.0]
         for axis in range(3):
-            near_low = self.low[axis] + config.WALL_MARGIN - position[axis]
+            low_margin = config.FLOOR_MARGIN if axis == 1 else config.WALL_MARGIN
+            near_low = self.low[axis] + low_margin - position[axis]
             near_high = position[axis] - (self.high[axis] - config.WALL_MARGIN)
             if near_low > 0:
-                force[axis] += config.WALL_FORCE * near_low / config.WALL_MARGIN
+                force[axis] += config.WALL_FORCE * near_low / low_margin
             if near_high > 0:
                 force[axis] -= config.WALL_FORCE * near_high / config.WALL_MARGIN
         return tuple(force)
@@ -203,6 +207,31 @@ class Flock:
                 velocity[axis] = -abs(velocity[axis])
         fish.position = tuple(position)
         fish.velocity = tuple(velocity)
+
+    @staticmethod
+    def _keep_out_of_rocks(fish, rocks):
+        """Камни непроницаемы: рыба, заплывшая в камень, выталкивается на его поверхность.
+
+        Для физики камень — сфера радиуса r с центром c. Если рыба ближе r + зазор
+        к центру, она переносится на эту границу вдоль нормали n = (p − c)/|p − c|,
+        а составляющая скорости, направленная в камень (v·n < 0), убирается:
+            v ← v − (v·n)·n
+        Остаётся скольжение вдоль поверхности камня. Камни внизу, поэтому рыбы,
+        плывущие выше всех камней, не проверяются.
+        """
+        for rock in rocks:
+            min_distance = rock.radius + config.FISH_ROCK_PADDING
+            if fish.position[1] > rock.center[1] + min_distance:
+                continue  # рыба выше камня
+            away = sub(fish.position, rock.center)
+            distance_squared = dot(away, away)
+            if distance_squared >= min_distance * min_distance or distance_squared < 1e-12:
+                continue
+            normal = scale(away, 1.0 / math.sqrt(distance_squared))
+            fish.position = add(rock.center, scale(normal, min_distance))
+            inward = dot(fish.velocity, normal)
+            if inward < 0.0:
+                fish.velocity = sub(fish.velocity, scale(normal, inward))
 
     # --- Показатели стаи (для панели и исследования) ---
 

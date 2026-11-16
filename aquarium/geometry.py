@@ -7,7 +7,11 @@
 Нормаль — единичный вектор, перпендикулярный поверхности; по ней считается освещение.
 """
 
-from aquarium.mathutils import cross, normalize, sub
+import math
+import random
+
+from aquarium import config
+from aquarium.mathutils import add, cross, dot, normalize, scale, sub
 
 
 def _face(name, low, high):
@@ -117,3 +121,81 @@ def fish(fish_length):
         vertices.extend(_triangle(back, following, current))  # задняя половина тела
     vertices.extend(_triangle(tail_root, tail_top, tail_bottom))
     return vertices
+
+
+def sphere(rings, segments, point_at):
+    """UV-сфера: rings поясов по широте и segments долей по долготе, как на глобусе.
+
+    Для каждого узла сетки вычисляется единичное направление из центра:
+        direction = (sin θ · cos φ, cos θ, sin θ · sin φ),  θ ∈ [0; π], φ ∈ [0; 2π)
+    point_at(direction) возвращает, где поставить вершину. Для пузырька это сама точка
+    единичной сферы, для камня — точка с неровностями (см. rock).
+
+    Соседние узлы двух поясов образуют четырёхугольник из двух треугольников.
+    На полюсах все узлы пояса совпадают, и там остаётся по одному треугольнику.
+    Нормали — по граням (_triangle), поэтому поверхность выглядит гранёной.
+    """
+    grid = []
+    for i in range(rings + 1):
+        theta = math.pi * i / rings  # 0 — северный полюс, π — южный
+        row = []
+        for j in range(segments):
+            phi = 2.0 * math.pi * j / segments
+            direction = (math.sin(theta) * math.cos(phi), math.cos(theta), math.sin(theta) * math.sin(phi))
+            row.append(point_at(direction))
+        grid.append(row)
+
+    vertices = []
+    for i in range(rings):
+        for j in range(segments):
+            j_next = (j + 1) % segments  # последняя доля замыкается на первую
+            a, b = grid[i][j], grid[i][j_next]          # верхний пояс
+            c, d = grid[i + 1][j], grid[i + 1][j_next]  # нижний пояс
+            if i != 0:              # у северного полюса a и b совпадают
+                vertices.extend(_triangle(a, b, d))
+            if i != rings - 1:      # у южного полюса c и d совпадают
+                vertices.extend(_triangle(a, d, c))
+    return vertices
+
+
+def unit_sphere():
+    """Низкополигональная сфера радиуса 1 для пузырьков (размер задаёт шейдер)."""
+    return sphere(6, 8, lambda direction: direction)
+
+
+def rock(center, radius, seed):
+    """Неровный камень в мировых координатах.
+
+    Радиус в направлении d меняется плавно — как сумма трёх синусоид вдоль
+    случайных осей:
+        r(d) = radius · (1 + Σ a · sin(fₖ · (d·axisₖ) + phaseₖ))
+    Оси, частоты и фазы берутся из генератора с начальным числом seed, поэтому
+    один и тот же камень всегда имеет одну и ту же форму. Часть камня ниже дна
+    «срезается»: такие вершины поднимаются на уровень дна.
+    """
+    rng = random.Random(seed)
+    bumps = []
+    for _ in range(3):
+        axis = normalize((rng.gauss(0, 1), rng.gauss(0, 1), rng.gauss(0, 1)))
+        bumps.append((axis, rng.uniform(2.0, 4.0), rng.uniform(0.0, 2.0 * math.pi)))
+
+    def point_at(direction):
+        factor = 1.0 + sum(config.ROCK_ROUGHNESS * math.sin(frequency * dot(direction, axis) + phase)
+                           for axis, frequency, phase in bumps)
+        x, y, z = add(center, scale(direction, radius * factor))
+        return (x, max(y, 0.0), z)
+
+    return sphere(7, 10, point_at)
+
+
+def seaweed_segment():
+    """Модель одного сегмента водоросли: две перпендикулярные пластины («крест» сверху).
+
+    Ширина 1 (x и z от −0.5 до 0.5), высота 1 (y от 0 до 1). Реальные длину,
+    ширину и наклон задаёт шейдер seaweed.vert. Одна плоская пластина при взгляде
+    с ребра исчезала бы, крест виден с любой стороны. Пластины видны с обеих
+    сторон: нормаль разворачивает фрагментный шейдер (gl_FrontFacing).
+    """
+    plate_a = _quad((0, 0, 1), [(-0.5, 0, 0), (0.5, 0, 0), (0.5, 1, 0), (-0.5, 1, 0)])
+    plate_b = _quad((1, 0, 0), [(0, 0, 0.5), (0, 0, -0.5), (0, 1, -0.5), (0, 1, 0.5)])
+    return plate_a + plate_b

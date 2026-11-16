@@ -14,6 +14,7 @@ from aquarium import config
 from aquarium.camera import OrbitCamera
 from aquarium.flock import Flock, FlockParams
 from aquarium.renderer import SceneRenderer
+from aquarium.scene import Scene
 from aquarium.ui import ControlPanel, load_cyrillic_font
 
 
@@ -75,6 +76,7 @@ class App:
         self.settings = config.ViewSettings()
         self.simulation = config.SimulationSettings()
         self.flock = Flock(FlockParams())
+        self.scene = Scene()
         self.camera = OrbitCamera()
         self.panel = ControlPanel(gpu_name=self.ctx.info["GL_RENDERER"])
         self.fps_counter = FpsCounter()
@@ -131,7 +133,8 @@ class App:
             imgui.backends.glfw_new_frame()
             imgui.new_frame()
             self._handle_mouse()
-            self.panel.draw(self.settings, self.simulation, self.flock, self.camera, self.fps_counter)
+            self.panel.draw(self.settings, self.simulation, self.flock, self.scene, self.camera,
+                            self.fps_counter)
 
             if self.settings.vsync != applied_vsync:
                 glfw.swap_interval(1 if self.settings.vsync else 0)
@@ -142,7 +145,7 @@ class App:
 
             # 4. Сцена, затем интерфейс поверх неё.
             width, height = glfw.get_framebuffer_size(self.window)
-            self.renderer.render(self.camera, width, height, self.settings, self.flock, now)
+            self.renderer.render(self.camera, width, height, self.settings, self.flock, self.scene)
             imgui.render()
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
 
@@ -170,7 +173,8 @@ class App:
         frame_started = time.perf_counter()
         while self.time_accumulator >= config.SIM_DT:
             step_started = time.perf_counter()
-            self.flock.step(config.SIM_DT)
+            self.flock.step(config.SIM_DT, self.scene.rocks)
+            self.scene.step(config.SIM_DT)
             step_finished = time.perf_counter()
             self.fps_counter.add_simulation_step(step_finished - step_started)
             self.time_accumulator -= config.SIM_DT

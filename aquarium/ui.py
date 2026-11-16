@@ -46,12 +46,13 @@ class ControlPanel:
     def __init__(self, gpu_name):
         self.gpu_name = gpu_name
 
-    def draw(self, view, simulation, flock, camera, fps_counter):
+    def draw(self, view, simulation, flock, scene, camera, fps_counter):
         imgui.set_next_window_pos(imgui.ImVec2(12, 12), imgui.Cond_.first_use_ever.value)
         # always_auto_resize: размер окна подстраивается под содержимое.
         imgui.begin("Управление", None, imgui.WindowFlags_.always_auto_resize.value)
         self._draw_performance(fps_counter)
         self._draw_flock(simulation, flock)
+        self._draw_scene(scene)
         self._draw_view(view)
         self._draw_camera(camera)
         imgui.end()
@@ -92,6 +93,25 @@ class ControlPanel:
 
         imgui.text(f"Среднее число соседей: {flock.average_neighbor_count():.1f}")
         imgui.text(f"Согласованность движения Φ: {flock.polarization():.2f}")
+
+    @staticmethod
+    def _draw_scene(scene):
+        imgui.separator_text("Сцена")
+        # Если для камня не нашлось свободного места, камней станет меньше,
+        # чем выбрано, и ползунок покажет фактическое число.
+        changed, count = imgui.slider_int("Камни", len(scene.rocks), *config.ROCK_COUNT_RANGE)
+        if changed:
+            scene.set_rock_count(count)
+        changed, count = imgui.slider_int("Водоросли", len(scene.seaweed), *config.SEAWEED_COUNT_RANGE)
+        if changed:
+            scene.set_seaweed_count(count)
+        changed, count = imgui.slider_int("Пузырьки", len(scene.bubbles), *config.BUBBLE_COUNT_RANGE)
+        if changed:
+            scene.set_bubble_count(count)
+        scene.set_sway_strength(_slider("Колебание водорослей", scene.sway_strength,
+                                        config.SWAY_STRENGTH_RANGE))
+        if imgui.button("Новая расстановка"):
+            scene.shuffle()
 
     @staticmethod
     def _draw_view(view):
