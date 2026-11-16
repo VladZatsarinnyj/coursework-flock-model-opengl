@@ -100,15 +100,23 @@ class Flock:
     def _acceleration(self, i):
         """Сумма сил, действующих на рыбу i (ускорение, единиц/с²).
 
-        Для соседей j рыбы i (их n штук):
+        Поведение — три правила стаи для соседей j рыбы i (их n штук):
             разделение  s = Σ (pᵢ − pⱼ) / |pᵢ − pⱼ|²  — от каждого соседа, сильнее вблизи
             выравнивание a = (Σ vⱼ) / n − vᵢ           — к средней скорости соседей
             сплочённость c = (Σ pⱼ) / n − pᵢ           — к центру соседей
-            F = w_s·s + w_a·a + w_c·c + сила стенок,   |F| ≤ FISH_MAX_ACCELERATION
+            F_правил = w_s·s + w_a·a + w_c·c,          |F_правил| ≤ FISH_MAX_ACCELERATION
+
+        Физические ограничения — не зависят от весов и не урезаются ограничением выше:
+            F = F_правил + F_стенок + F_столкновений
+
+        Почему ограничения добавляются после урезания: при большой сплочённости
+        урезание уменьшило бы все слагаемые пропорционально, и отталкивание
+        не смогло бы помешать рыбам слиться в одну точку.
         """
         fish = self.fish[i]
         params = self.params
-        total = self._wall_force(fish.position)
+        rules = (0.0, 0.0, 0.0)
+        collision = (0.0, 0.0, 0.0)
 
         neighbor_ids = self.neighbors[i]
         if neighbor_ids:
@@ -119,8 +127,11 @@ class Flock:
                 other = self.fish[j]
                 away = sub(fish.position, other.position)
                 distance_squared = dot(away, away)
-                if distance_squared > 1e-9:  # две рыбы в одной точке: направление не определено
+                # Две рыбы точно в одной точке: направление не определено. Сила
+                # столкновения не даёт им сблизиться, поэтому на практике это не случается.
+                if distance_squared > 1e-9:
                     separation = add(separation, scale(away, 1.0 / distance_squared))
+                    collision = add(collision, self._collision_force(away, math.sqrt(distance_squared)))
                 velocity_sum = add(velocity_sum, other.velocity)
                 position_sum = add(position_sum, other.position)
 
@@ -128,11 +139,26 @@ class Flock:
             alignment = sub(scale(velocity_sum, 1.0 / n), fish.velocity)
             cohesion = sub(scale(position_sum, 1.0 / n), fish.position)
 
-            total = add(total, scale(separation, params.separation_weight))
-            total = add(total, scale(alignment, params.alignment_weight))
-            total = add(total, scale(cohesion, params.cohesion_weight))
+            rules = add(rules, scale(separation, params.separation_weight))
+            rules = add(rules, scale(alignment, params.alignment_weight))
+            rules = add(rules, scale(cohesion, params.cohesion_weight))
 
-        return clamp_length(total, config.FISH_MAX_ACCELERATION)
+        rules = clamp_length(rules, config.FISH_MAX_ACCELERATION)
+        return add(add(rules, self._wall_force(fish.position)), collision)
+
+    @staticmethod
+    def _collision_force(away, distance):
+        """Отталкивание соседа, оказавшегося ближе личного пространства d₀.
+
+        Сила направлена от соседа и растёт линейно, когда расстояние d уменьшается:
+            F = COLLISION_FORCE · (d₀ − d) / d₀ · (pᵢ − pⱼ) / d,  при d < d₀
+        Это та же схема, что у мягкой силы стенок, только «стенка» — тело соседа.
+        """
+        overlap = config.FISH_PERSONAL_SPACE - distance
+        if overlap <= 0.0:
+            return (0.0, 0.0, 0.0)
+        strength = config.COLLISION_FORCE * overlap / config.FISH_PERSONAL_SPACE
+        return scale(away, strength / distance)
 
     def _wall_force(self, position):
         """Мягкий разворот у стенок.

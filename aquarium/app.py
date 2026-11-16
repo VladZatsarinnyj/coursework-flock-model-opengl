@@ -18,7 +18,8 @@ from aquarium.ui import ControlPanel, load_cyrillic_font
 
 
 class FpsCounter:
-    """Раз в полсекунды обновляет FPS, среднее время кадра и среднее время шага симуляции."""
+    """Раз в полсекунды обновляет FPS, среднее время кадра, среднее время шага симуляции
+    и скорость симуляции."""
 
     UPDATE_INTERVAL = 0.5  # секунды
 
@@ -26,6 +27,7 @@ class FpsCounter:
         self.fps = 0.0
         self.frame_time_ms = 0.0
         self.step_time_ms = 0.0
+        self.simulation_speed = 1.0  # доля реального времени: 1.0 — стая успевает, 0.5 — вдвое медленнее
         self._frames = 0
         self._elapsed = 0.0
         self._steps = 0
@@ -44,6 +46,10 @@ class FpsCounter:
             self.frame_time_ms = 1000.0 * self._elapsed / self._frames
             if self._steps > 0:
                 self.step_time_ms = 1000.0 * self._steps_duration / self._steps
+            # Сколько модельного времени прожито за прошедшее реальное время.
+            # Чуть больше 1 бывает только из-за границы окна усреднения, поэтому
+            # значение ограничено единицей. На паузе скорость равна 0.
+            self.simulation_speed = min(1.0, self._steps * config.SIM_DT / self._elapsed)
             self._frames = 0
             self._elapsed = 0.0
             self._steps = 0
@@ -151,24 +157,26 @@ class App:
         сколько уместилось. Поэтому поведение стаи не зависит от FPS: при 30 и при
         144 кадрах в секунду рыбы проплывают одинаковый путь по одинаковым правилам.
 
-        Если компьютер не успевает, число шагов за кадр ограничено, а лишнее
-        накопленное время отбрасывается. Иначе каждый кадр требовал бы всё больше
-        шагов и программа «застыла» бы.
+        Если компьютер не успевает (один шаг дольше SIM_TIME_BUDGET), остаток
+        накопленного времени отбрасывается: стая движется медленнее реального
+        времени, но кадры идут часто и интерфейс отвечает. Без этого каждый кадр
+        требовал бы всё больше шагов, и программа «застыла» бы.
         """
         if self.simulation.paused:
             self.time_accumulator = 0.0
             return
 
         self.time_accumulator += min(frame_time, config.MAX_FRAME_TIME)
-        steps = 0
-        while self.time_accumulator >= config.SIM_DT and steps < config.MAX_SIM_STEPS_PER_FRAME:
-            started = time.perf_counter()
+        frame_started = time.perf_counter()
+        while self.time_accumulator >= config.SIM_DT:
+            step_started = time.perf_counter()
             self.flock.step(config.SIM_DT)
-            self.fps_counter.add_simulation_step(time.perf_counter() - started)
+            step_finished = time.perf_counter()
+            self.fps_counter.add_simulation_step(step_finished - step_started)
             self.time_accumulator -= config.SIM_DT
-            steps += 1
-        if self.time_accumulator >= config.SIM_DT:
-            self.time_accumulator = 0.0
+            if step_finished - frame_started > config.SIM_TIME_BUDGET:
+                self.time_accumulator = 0.0
+                break
 
     def _handle_mouse(self):
         """Вращение и приближение камеры мышью.

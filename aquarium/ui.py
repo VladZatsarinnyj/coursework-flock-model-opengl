@@ -61,6 +61,7 @@ class ControlPanel:
         imgui.text(f"FPS: {fps_counter.fps:.1f}")
         imgui.text(f"Время кадра: {fps_counter.frame_time_ms:.2f} мс")
         imgui.text(f"Шаг симуляции: {fps_counter.step_time_ms:.2f} мс")
+        imgui.text(f"Скорость симуляции: {100 * fps_counter.simulation_speed:.0f} %")
         imgui.text(f"Видеокарта: {self.gpu_name}")
 
     @staticmethod
