@@ -1,4 +1,4 @@
-"""Геометрия аквариума: списки вершин для загрузки в видеопамять.
+"""Геометрия сцены: списки вершин для загрузки в видеопамять.
 
 Каждая функция возвращает плоский список чисел. Треугольники идут подряд:
 каждые 3 вершины образуют один треугольник, каждые 2 — один отрезок (для рёбер).
@@ -6,6 +6,8 @@
 Вершина освещаемой поверхности — 6 чисел: позиция (x, y, z) и нормаль (nx, ny, nz).
 Нормаль — единичный вектор, перпендикулярный поверхности; по ней считается освещение.
 """
+
+from aquarium.mathutils import cross, normalize, sub
 
 
 def _face(name, low, high):
@@ -73,4 +75,45 @@ def box_edges(low, high):
     for start, end in edges:
         vertices.extend(corners[start])
         vertices.extend(corners[end])
+    return vertices
+
+
+def _triangle(a, b, c):
+    """Треугольник с нормалью, вычисленной по порядку вершин: n = normalize((b − a) × (c − a)).
+
+    При обходе a → b → c против часовой стрелки нормаль смотрит на наблюдателя.
+    """
+    normal = normalize(cross(sub(b, a), sub(c, a)))
+    vertices = []
+    for point in (a, b, c):
+        vertices.extend(point)
+        vertices.extend(normal)
+    return vertices
+
+
+def fish(fish_length):
+    """Упрощённая модель рыбы: ромбовидное тело (8 треугольников) и хвост (1 треугольник).
+
+    Рыба смотрит вдоль оси +X, спина — вдоль +Y, правый бок — вдоль +Z.
+    Повернуть рыбу по направлению движения — задача вершинного шейдера fish.vert.
+    """
+    k = fish_length / 1.35  # исходные размеры ниже даны для рыбы длиной 1.35
+    nose = (0.60 * k, 0.0, 0.0)
+    back = (-0.40 * k, 0.0, 0.0)  # конец тела, начало хвоста
+    # Самое широкое сечение тела — ромб из четырёх точек.
+    top = (0.05 * k, 0.20 * k, 0.0)
+    bottom = (0.05 * k, -0.18 * k, 0.0)
+    right = (0.05 * k, 0.0, 0.12 * k)
+    left = (0.05 * k, 0.0, -0.12 * k)
+    # Хвост — плоский вертикальный треугольник; видна любая его сторона.
+    tail_root = (-0.35 * k, 0.0, 0.0)
+    tail_top = (-0.75 * k, 0.22 * k, 0.0)
+    tail_bottom = (-0.75 * k, -0.22 * k, 0.0)
+
+    vertices = []
+    ring = [top, right, bottom, left, top]  # обход сечения
+    for current, following in zip(ring, ring[1:]):
+        vertices.extend(_triangle(nose, current, following))  # передняя половина тела
+        vertices.extend(_triangle(back, following, current))  # задняя половина тела
+    vertices.extend(_triangle(tail_root, tail_top, tail_bottom))
     return vertices
