@@ -6,7 +6,7 @@ from pathlib import Path
 import moderngl
 
 from aquarium import config, geometry
-from aquarium.mathutils import normalize, to_opengl
+from aquarium.mathutils import add, length, normalize, scale, to_opengl
 
 SHADER_DIR = Path(__file__).parent / "shaders"
 
@@ -94,10 +94,48 @@ class InstancedMesh:
         self.vbo.release()
 
 
+class DynamicLines:
+    """Отрезки, которые меняются каждый кадр: сфера соседства, векторы скорости и сил.
+
+    Буфер выделяется один раз под максимальное число вершин, а в каждом кадре
+    в него записываются новые данные. У вершины 6 чисел: положение и цвет.
+    """
+
+    def __init__(self, ctx, program, max_vertices):
+        self.max_vertices = max_vertices
+        self.buffer = ctx.buffer(reserve=max_vertices * 6 * 4)
+        self.vao = ctx.vertex_array(program, [(self.buffer, "3f 3f", "in_position", "in_color")])
+        self.count = 0
+
+    def update(self, segments):
+        """segments — список (начало, конец, цвет)."""
+        data = []
+        for start, end, color in segments:
+            data.extend(start)
+            data.extend(color)
+            data.extend(end)
+            data.extend(color)
+        count = len(data) // 6
+        if count > self.max_vertices:
+            raise ValueError(f"Вершин линий {count}, а буфер рассчитан на {self.max_vertices}")
+        if count > 0:
+            self.buffer.write(array("f", data).tobytes())
+        self.count = count
+
+    def render(self):
+        if self.count > 0:
+            self.vao.render(moderngl.LINES, vertices=self.count)
+
+    def release(self):
+        self.vao.release()
+        self.buffer.release()
+
+
 class SceneRenderer:
     """Рисует кадр в фиксированном порядке.
 
-    1. Непрозрачные объекты с записью глубины: дно, камни, водоросли, рыбы, корм.
+    1. Непрозрачные объекты с записью глубины: дно, камни, водоросли, рыбы, корм,
+       вспомогательные линии (сфера соседства, векторы).
     2. Дальние стенки: полупрозрачные, без записи глубины.
     3. Пузырьки — полупрозрачные объекты внутри аквариума.
     4. Ближние стенки.
@@ -115,7 +153,9 @@ class SceneRenderer:
         self.fish_program = load_program(ctx, "fish", "lit")
         self.seaweed_program = load_program(ctx, "seaweed", "lit")
         self.sphere_program = load_program(ctx, "bubble", "lit")
-        self.programs = [self.lit, self.unlit, self.fish_program, self.seaweed_program, self.sphere_program]
+        self.lines_program = load_program(ctx, "lines", "lines")
+        self.programs = [self.lit, self.unlit, self.fish_program, self.seaweed_program, self.sphere_program,
+                         self.lines_program]
         self.lit_programs = [self.lit, self.fish_program, self.seaweed_program, self.sphere_program]
 
         low, high = config.AQUARIUM_MIN, config.AQUARIUM_MAX
@@ -147,6 +187,8 @@ class SceneRenderer:
             max_instances=config.FOOD_FLAKES,
         )
 
+        self.helper_lines = DynamicLines(ctx, self.lines_program, config.MAX_LINE_VERTICES)
+
         # Камни неподвижны, и у каждого своя форма. Их сетки строятся заново
         # только когда меняется набор камней (scene.rocks_version).
         self.rock_meshes = []  # пары (сетка, цвет)
@@ -154,7 +196,7 @@ class SceneRenderer:
 
         self.light_direction = normalize(config.LIGHT_DIRECTION)
 
-    def render(self, camera, width, height, settings, flock, scene, food_enabled):
+    def render(self, camera, width, height, view, simulation, flock, scene):
         if width == 0 or height == 0:
             return  # окно свёрнуто: рисовать некуда
 
@@ -163,11 +205,11 @@ class SceneRenderer:
         ctx.clear(*config.BACKGROUND_COLOR, 1.0)  # очищает буфер цвета и буфер глубины
 
         # Матрицы вида и проекции одинаковы для всех объектов кадра.
-        view = to_opengl(camera.view_matrix())
-        projection = to_opengl(camera.projection_matrix(width / height))
+        view_matrix = to_opengl(camera.view_matrix())
+        projection_matrix = to_opengl(camera.projection_matrix(width / height))
         for program in self.programs:
-            program["u_view"].value = view
-            program["u_projection"].value = projection
+            program["u_view"].value = view_matrix
+            program["u_projection"].value = projection_matrix
         for program in self.lit_programs:
             program["u_light_direction"].value = self.light_direction
             program["u_alpha"].value = 1.0
@@ -183,9 +225,12 @@ class SceneRenderer:
         for mesh, color in self.rock_meshes:
             self._draw(mesh, color, 1.0)
         self._draw_seaweed(scene)
-        self._draw_fish(flock, scene.time)
-        if food_enabled and scene.food_available():
+        self._draw_fish(flock, scene.time, view.selected_fish)
+        food_present = simulation.food_enabled and scene.food_available()
+        if food_present:
             self._draw_spheres(self.food, scene.food_flakes(), config.FOOD_COLOR, 1.0)
+        food = scene.food_position() if food_present else None
+        self._draw_helper_lines(view, simulation, flock, scene, food)
 
         # Проходы 2–4: прозрачные объекты. Смешивание: цвет = α·новый + (1 − α)·уже_нарисованный.
         ctx.enable_only(moderngl.DEPTH_TEST | moderngl.BLEND | moderngl.CULL_FACE)
@@ -196,19 +241,19 @@ class SceneRenderer:
         # Нормали стенок смотрят наружу, поэтому дальние стенки повёрнуты к камере
         # обратной стороной. Отсекаем лицевые — остаются дальние стенки.
         ctx.cull_face = "front"
-        self._draw(self.walls, config.GLASS_COLOR, settings.wall_alpha)
+        self._draw(self.walls, config.GLASS_COLOR, view.wall_alpha)
         # Пузырьки — между дальними и ближними стенками. Отсекаются задние половинки
         # сфер, чтобы пузырёк не смешивался сам с собой.
         ctx.cull_face = "back"
         self._draw_spheres(self.bubbles, scene.bubble_instances(), config.BUBBLE_COLOR, config.BUBBLE_ALPHA)
-        self._draw(self.walls, config.GLASS_COLOR, settings.wall_alpha)
+        self._draw(self.walls, config.GLASS_COLOR, view.wall_alpha)
         # Запись глубины обязательно включается обратно: очистка буфера глубины
         # в начале следующего кадра тоже подчиняется этой маске.
         ctx.fbo.depth_mask = True
 
         # Проход 5: рёбра.
         ctx.enable_only(moderngl.DEPTH_TEST)
-        if settings.show_edges:
+        if view.show_edges:
             self._draw(self.edges, config.EDGE_COLOR, 1.0)
 
     def _rebuild_rocks(self, rocks, version):
@@ -234,19 +279,59 @@ class SceneRenderer:
         self.seaweed.update(data)
         self.seaweed.render()
 
-    def _draw_fish(self, flock, time):
+    def _draw_fish(self, flock, time, selected):
         # Данные всех рыб одним списком: x y z, vx vy vz, r g b для каждой.
+        # Выбранная рыба белая, её соседи — голубые: видно, на кого она реагирует.
+        neighbors = set(flock.neighbors[selected]) if selected is not None else set()
         data = []
         for i, fish in enumerate(flock.fish):
             data.extend(fish.position)
             data.extend(fish.velocity)
-            data.extend(config.FISH_COLORS[i % len(config.FISH_COLORS)])
+            if i == selected:
+                data.extend(config.SELECTED_FISH_COLOR)
+            elif i in neighbors:
+                data.extend(config.NEIGHBOR_FISH_COLOR)
+            else:
+                data.extend(config.FISH_COLORS[i % len(config.FISH_COLORS)])
         self.fish.update(data)
 
         program = self.fish_program
         program["u_time"].value = time
         program["u_fish_length"].value = config.FISH_LENGTH
         self.fish.render()
+
+    def _draw_helper_lines(self, view, simulation, flock, scene, food):
+        """Сфера соседства, векторы скорости и сил — одним вызовом отрисовки."""
+        segments = []
+        if view.show_all_velocities:
+            for fish in flock.fish:
+                segments.append(self._arrow(fish.position, fish.velocity, config.VELOCITY_VECTOR_SCALE,
+                                            config.VELOCITY_COLOR))
+        selected = view.selected_fish
+        if selected is not None:
+            fish = flock.fish[selected]
+            if view.show_neighbor_sphere:
+                # Радиус тот же, что при поиске соседей: внутри сферы — ровно те рыбы,
+                # что подсвечены голубым и посчитаны в панели.
+                for start, end in geometry.sphere_outline(fish.position, flock.params.neighbor_radius,
+                                                          config.NEIGHBOR_SPHERE_SEGMENTS):
+                    segments.append((start, end, config.NEIGHBOR_SPHERE_COLOR))
+            if view.show_force_vectors:
+                if not view.show_all_velocities:
+                    segments.append(self._arrow(fish.position, fish.velocity, config.VELOCITY_VECTOR_SCALE,
+                                                config.VELOCITY_COLOR))
+                rules, constraints = flock.force_components(selected, scene.rocks, simulation.avoid_rocks, food)
+                for name, vector in rules + constraints:
+                    if length(vector) > 1e-6:
+                        segments.append(self._arrow(fish.position, vector, config.FORCE_VECTOR_SCALE,
+                                                    config.FORCE_COLORS[name]))
+        self.helper_lines.update(segments)
+        self.helper_lines.render()
+
+    @staticmethod
+    def _arrow(start, vector, vector_scale, color):
+        """Отрезок от start в направлении vector длиной |vector|·vector_scale."""
+        return (start, add(start, scale(vector, vector_scale)), color)
 
     def _draw_spheres(self, mesh, spheres, color, alpha):
         """Рисует набор сфер (центр, радиус) одного цвета: пузырьки или хлопья корма."""
@@ -267,7 +352,8 @@ class SceneRenderer:
 
     def release(self):
         """Освобождает видеопамять. Вызывается до уничтожения контекста OpenGL."""
-        for mesh in (self.floor, self.walls, self.edges, self.fish, self.seaweed, self.bubbles, self.food):
+        for mesh in (self.floor, self.walls, self.edges, self.fish, self.seaweed, self.bubbles, self.food,
+                     self.helper_lines):
             mesh.release()
         for mesh, _ in self.rock_meshes:
             mesh.release()

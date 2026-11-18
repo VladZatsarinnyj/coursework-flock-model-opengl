@@ -1,9 +1,9 @@
-"""Внешняя камера, вращающаяся вокруг аквариума."""
+"""Камеры: внешняя (вращается вокруг аквариума) и внутренняя (следует за выбранной рыбой)."""
 
 import math
 
 from aquarium import config
-from aquarium.mathutils import look_at, perspective
+from aquarium.mathutils import add, length, look_at, normalize, perspective, scale
 
 WORLD_UP = (0.0, 1.0, 0.0)
 
@@ -56,6 +56,63 @@ class OrbitCamera:
 
     def view_matrix(self):
         return look_at(self.eye_position(), self.target, WORLD_UP)
+
+    def projection_matrix(self, aspect):
+        return perspective(config.CAMERA_FOV_DEG, aspect, config.CAMERA_NEAR, config.CAMERA_FAR)
+
+
+class FollowCamera:
+    """Внутренняя камера: следует за выбранной рыбой, позади и чуть выше неё.
+
+        eye    = p − d·BEHIND + up·HEIGHT
+        target = p + d·LOOK_AHEAD
+
+    где p — положение рыбы, d — сглаженное направление её движения. Без сглаживания
+    камера дёргалась бы при каждом повороте рыбы. Сглаживание экспоненциальное:
+        d ← normalize(d + (v/|v| − d)·k),  k = 1 − e^(−FOLLOW_SMOOTHING·Δt)
+    Доля k зависит от Δt так, что результат не зависит от FPS.
+
+    Наклон d ограничен FOLLOW_MAX_PITCH_DEG: если рыба плывёт почти вертикально,
+    направление взгляда совпало бы с вектором «вверх», и look_at не смогла бы
+    построить базис камеры (та же причина, что у внешней камеры).
+    """
+
+    def __init__(self):
+        self.direction = (1.0, 0.0, 0.0)
+        self.fish_position = (0.0, 0.0, 0.0)
+        self.fish_index = None  # за какой рыбой камера следила в прошлом кадре
+
+    def update(self, fish_index, fish, dt):
+        speed = length(fish.velocity)
+        heading = scale(fish.velocity, 1.0 / speed) if speed > 1e-9 else self.direction
+        if fish_index != self.fish_index:
+            self.direction = heading  # выбрана другая рыба: сразу смотреть по её курсу
+            self.fish_index = fish_index
+        else:
+            k = 1.0 - math.exp(-config.FOLLOW_SMOOTHING * dt)
+            blended = add(self.direction, scale(add(heading, scale(self.direction, -1.0)), k))
+            self.direction = blended if length(blended) > 1e-9 else heading
+        self.direction = self._limit_pitch(normalize(self.direction))
+        self.fish_position = fish.position
+
+    @staticmethod
+    def _limit_pitch(direction):
+        horizontal = math.hypot(direction[0], direction[2])
+        if horizontal < 1e-6:
+            return (1.0, 0.0, 0.0)  # строго вертикально: горизонтальное направление не определено
+        max_pitch = math.radians(config.FOLLOW_MAX_PITCH_DEG)
+        pitch = max(-max_pitch, min(max_pitch, math.atan2(direction[1], horizontal)))
+        return (direction[0] / horizontal * math.cos(pitch),
+                math.sin(pitch),
+                direction[2] / horizontal * math.cos(pitch))
+
+    def eye_position(self):
+        behind = scale(self.direction, -config.FOLLOW_DISTANCE_BEHIND)
+        return add(add(self.fish_position, behind), (0.0, config.FOLLOW_HEIGHT, 0.0))
+
+    def view_matrix(self):
+        target = add(self.fish_position, scale(self.direction, config.FOLLOW_LOOK_AHEAD))
+        return look_at(self.eye_position(), target, WORLD_UP)
 
     def projection_matrix(self, aspect):
         return perspective(config.CAMERA_FOV_DEG, aspect, config.CAMERA_NEAR, config.CAMERA_FAR)

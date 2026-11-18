@@ -118,33 +118,29 @@ class Flock:
         self._touching = touching
         self.contact_time += dt
 
-    def _acceleration(self, i, rocks, avoid_rocks, food):
-        """Сумма сил, действующих на рыбу i (ускорение, единиц/с²).
+    def force_components(self, i, rocks, avoid_rocks, food):
+        """Слагаемые ускорения рыбы i: для расчёта движения и для показа векторами.
 
         Поведение — три правила стаи для соседей j рыбы i (их n штук) и корм:
             разделение  s = Σ (pᵢ − pⱼ) / |pᵢ − pⱼ|²  — от каждого соседа, сильнее вблизи
             выравнивание a = (Σ vⱼ) / n − vᵢ           — к средней скорости соседей
             сплочённость c = (Σ pⱼ) / n − pᵢ           — к центру соседей
             корм         f — см. _seek
-            F_правил = w_s·s + w_a·a + w_c·c + w_f·f,  |F_правил| ≤ FISH_MAX_ACCELERATION
 
-        Физические ограничения и обход камней не зависят от весов и не урезаются:
-            F = F_правил + F_стенок + F_столкновений + F_обхода
-        Обход стоит вне ограничения по той же причине: при большой сплочённости
-        он иначе мог бы не успеть отвернуть рыбу.
+        Ограничения — стенки, столкновения, обход камней — не зависят от весов.
 
-        Почему ограничения добавляются после урезания: при большой сплочённости
-        урезание уменьшило бы все слагаемые пропорционально, и отталкивание
-        не смогло бы помешать рыбам слиться в одну точку.
+        Возвращает два списка пар (название, вектор): правила (уже умноженные на веса)
+        и ограничения. Как они складываются, описано в _acceleration.
         """
         fish = self.fish[i]
         params = self.params
-        rules = (0.0, 0.0, 0.0)
+        separation = (0.0, 0.0, 0.0)
+        alignment = (0.0, 0.0, 0.0)
+        cohesion = (0.0, 0.0, 0.0)
         collision = (0.0, 0.0, 0.0)
 
         neighbor_ids = self.neighbors[i]
         if neighbor_ids:
-            separation = (0.0, 0.0, 0.0)
             velocity_sum = (0.0, 0.0, 0.0)
             position_sum = (0.0, 0.0, 0.0)
             for j in neighbor_ids:
@@ -163,17 +159,39 @@ class Flock:
             alignment = sub(scale(velocity_sum, 1.0 / n), fish.velocity)
             cohesion = sub(scale(position_sum, 1.0 / n), fish.position)
 
-            rules = add(rules, scale(separation, params.separation_weight))
-            rules = add(rules, scale(alignment, params.alignment_weight))
-            rules = add(rules, scale(cohesion, params.cohesion_weight))
-
+        rules = [
+            ("разделение", scale(separation, params.separation_weight)),
+            ("выравнивание", scale(alignment, params.alignment_weight)),
+            ("сплочённость", scale(cohesion, params.cohesion_weight)),
+        ]
         if food is not None:
-            rules = add(rules, scale(self._seek(fish, food), params.food_weight))
+            rules.append(("корм", scale(self._seek(fish, food), params.food_weight)))
 
-        rules = clamp_length(rules, config.FISH_MAX_ACCELERATION)
-        total = add(add(rules, self._wall_force(fish.position)), collision)
+        constraints = [
+            ("стенки", self._wall_force(fish.position)),
+            ("столкновения", collision),
+        ]
         if avoid_rocks:
-            total = add(total, self._avoidance_force(fish, rocks))
+            constraints.append(("обход камней", self._avoidance_force(fish, rocks)))
+        return rules, constraints
+
+    def _acceleration(self, i, rocks, avoid_rocks, food):
+        """Ускорение рыбы i, единиц/с²:
+
+            F = clamp(Σ правил, FISH_MAX_ACCELERATION) + Σ ограничений
+
+        Правила ограничиваются по длине, ограничения — нет. Если бы ограничения
+        урезались вместе с правилами, при большой сплочённости урезание уменьшило бы
+        все слагаемые пропорционально: отталкивание не помешало бы рыбам слиться
+        в точку, а обход не успел бы отвернуть рыбу от камня.
+        """
+        rules, constraints = self.force_components(i, rocks, avoid_rocks, food)
+        total = (0.0, 0.0, 0.0)
+        for _, vector in rules:
+            total = add(total, vector)
+        total = clamp_length(total, config.FISH_MAX_ACCELERATION)
+        for _, vector in constraints:
+            total = add(total, vector)
         return total
 
     def _seek(self, fish, target):

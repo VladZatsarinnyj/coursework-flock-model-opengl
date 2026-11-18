@@ -1,6 +1,7 @@
 """Приложение: окно, контекст OpenGL, интерфейс и главный цикл."""
 
 import ctypes
+import math
 import time
 
 # imgui_bundle импортируется раньше glfw. В imgui_bundle есть своя копия библиотеки
@@ -11,8 +12,9 @@ import glfw
 import moderngl
 
 from aquarium import config
-from aquarium.camera import OrbitCamera
+from aquarium.camera import FollowCamera, OrbitCamera
 from aquarium.flock import Flock, FlockParams
+from aquarium.picking import mouse_ray, pick_fish
 from aquarium.renderer import SceneRenderer
 from aquarium.scene import Scene
 from aquarium.ui import ControlPanel, load_cyrillic_font
@@ -77,7 +79,10 @@ class App:
         self.simulation = config.SimulationSettings()
         self.flock = Flock(FlockParams())
         self.scene = Scene()
-        self.camera = OrbitCamera()
+        self.camera = OrbitCamera()            # внешняя камера
+        self.follow_camera = FollowCamera()    # внутренняя камера — за выбранной рыбой
+        self.active_camera = self.camera       # через какую камеру рисуется кадр
+        self.press_position = None             # где была нажата левая кнопка мыши
         self.panel = ControlPanel(gpu_name=self.ctx.info["GL_RENDERER"])
         self.fps_counter = FpsCounter()
         self.time_accumulator = 0.0  # время, ещё не «прожитое» симуляцией
@@ -143,14 +148,18 @@ class App:
             # 3. Симуляция стаи.
             self._update_simulation(frame_time)
 
-            # 4. Сцена, затем интерфейс поверх неё.
+            # 4. Выбранная рыба и камера. Рыб могло стать меньше — тогда выбор снимается.
+            self.settings.select_fish(self.settings.selected_fish, len(self.flock.fish))
+            self.active_camera = self._choose_camera(min(frame_time, config.MAX_FRAME_TIME))
+
+            # 5. Сцена, затем интерфейс поверх неё.
             width, height = glfw.get_framebuffer_size(self.window)
-            self.renderer.render(self.camera, width, height, self.settings, self.flock, self.scene,
-                                 self.simulation.food_enabled)
+            self.renderer.render(self.active_camera, width, height, self.settings, self.simulation,
+                                 self.flock, self.scene)
             imgui.render()
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
 
-            # 5. Показ кадра. Рисование шло в невидимый задний буфер,
+            # 6. Показ кадра. Рисование шло в невидимый задний буфер,
             #    теперь буферы меняются местами (двойная буферизация).
             glfw.swap_buffers(self.window)
 
@@ -188,20 +197,51 @@ class App:
                 break
 
     def _handle_mouse(self):
-        """Вращение и приближение камеры мышью.
+        """Мышь: щелчок выбирает рыбу, перетаскивание и колесо управляют внешней камерой.
 
         Состояние мыши берётся из ImGui: он уже получает события GLFW и знает,
         находится ли курсор над его окном (want_capture_mouse). Тогда движение
         ползунка в панели не вращает камеру.
+
+        Щелчок и перетаскивание начинаются одинаково — с нажатия левой кнопки.
+        Если между нажатием и отпусканием курсор сдвинулся не больше CLICK_MAX_DRAG
+        пикселей, это щелчок, иначе — вращение камеры.
         """
         io = imgui.get_io()
         if io.want_capture_mouse:
+            self.press_position = None
             return
-        if imgui.is_mouse_down(0):  # 0 — левая кнопка
-            self.camera.rotate(-io.mouse_delta.x * config.MOUSE_ROTATION_SPEED,
-                               io.mouse_delta.y * config.MOUSE_ROTATION_SPEED)
-        if io.mouse_wheel != 0:
-            self.camera.zoom(config.MOUSE_ZOOM_STEP ** io.mouse_wheel)
+
+        if imgui.is_mouse_clicked(0):  # 0 — левая кнопка
+            self.press_position = (io.mouse_pos.x, io.mouse_pos.y)
+        if imgui.is_mouse_released(0) and self.press_position is not None:
+            moved = math.hypot(io.mouse_pos.x - self.press_position[0], io.mouse_pos.y - self.press_position[1])
+            if moved <= config.CLICK_MAX_DRAG:
+                self._select_fish_at(io.mouse_pos.x, io.mouse_pos.y, io.display_size.x, io.display_size.y)
+            self.press_position = None
+
+        if self.active_camera is self.camera:  # мышью управляется только внешняя камера
+            if imgui.is_mouse_down(0):
+                self.camera.rotate(-io.mouse_delta.x * config.MOUSE_ROTATION_SPEED,
+                                   io.mouse_delta.y * config.MOUSE_ROTATION_SPEED)
+            if io.mouse_wheel != 0:
+                self.camera.zoom(config.MOUSE_ZOOM_STEP ** io.mouse_wheel)
+
+    def _select_fish_at(self, x, y, width, height):
+        """Выбирает рыбу под курсором; щелчок по пустому месту снимает выбор."""
+        if width <= 0 or height <= 0:
+            return
+        origin, direction = mouse_ray(self.active_camera, x, y, width, height)
+        self.settings.select_fish(pick_fish(origin, direction, self.flock.fish), len(self.flock.fish))
+
+    def _choose_camera(self, dt):
+        """Камера за рыбой работает, только если она включена и рыба выбрана."""
+        selected = self.settings.selected_fish
+        if self.settings.follow_camera and selected is not None:
+            self.follow_camera.update(selected, self.flock.fish[selected], dt)
+            return self.follow_camera
+        self.follow_camera.fish_index = None  # при следующем включении камера сразу встанет за рыбой
+        return self.camera
 
     def close(self):
         """Освобождает ресурсы в порядке, обратном созданию. Повторный вызов безопасен."""

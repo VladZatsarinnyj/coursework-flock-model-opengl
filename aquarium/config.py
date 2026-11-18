@@ -148,6 +148,35 @@ FOOD_FLAKE_RADIUS = 0.08
 FOOD_SPIN = 1.5                     # скорость вращения облачка, рад/с
 FOOD_COLOR = (0.80, 0.45, 0.20)
 
+# --- Выбранная рыба ---
+FISH_PICK_RADIUS = 0.8        # радиус сферы вокруг рыбы, по которой попадает щелчок мыши
+CLICK_MAX_DRAG = 4.0          # смещение курсора в пикселях, после которого это уже вращение, а не щелчок
+SELECTED_FISH_COLOR = (1.00, 1.00, 1.00)
+NEIGHBOR_FISH_COLOR = (0.30, 0.85, 1.00)
+NEIGHBOR_SPHERE_COLOR = (0.30, 0.85, 1.00)
+NEIGHBOR_SPHERE_SEGMENTS = 64  # из скольких отрезков состоит каждая окружность сферы соседства
+VELOCITY_COLOR = (1.00, 1.00, 0.60)
+VELOCITY_VECTOR_SCALE = 0.5    # длина стрелки скорости = |v| · 0.5
+FORCE_VECTOR_SCALE = 0.3       # длина стрелки силы = |F| · 0.3
+# Цвета векторов сил выбранной рыбы; названия совпадают с Flock.force_components.
+FORCE_COLORS = {
+    "разделение": (1.00, 0.35, 0.35),
+    "выравнивание": (0.35, 1.00, 0.35),
+    "сплочённость": (0.45, 0.60, 1.00),
+    "корм": (1.00, 0.60, 0.20),
+    "стенки": (0.80, 0.80, 0.80),
+    "столкновения": (1.00, 0.40, 1.00),
+    "обход камней": (1.00, 1.00, 0.30),
+}
+MAX_LINE_VERTICES = 4000      # размер буфера вспомогательных линий
+
+# Камера за выбранной рыбой («внутренняя»).
+FOLLOW_DISTANCE_BEHIND = 3.0  # насколько камера позади рыбы
+FOLLOW_HEIGHT = 0.8           # насколько выше рыбы
+FOLLOW_LOOK_AHEAD = 4.0       # точка, куда смотрит камера, — впереди рыбы
+FOLLOW_SMOOTHING = 3.0        # скорость, с которой камера догоняет поворот рыбы, 1/с
+FOLLOW_MAX_PITCH_DEG = 60.0   # наклон камеры ограничен, как у внешней камеры
+
 # --- Интерфейс ---
 FONT_SIZE = 17.0
 WALL_ALPHA_MIN = 0.0
@@ -161,10 +190,22 @@ class ViewSettings:
     wall_alpha: float = 0.15  # непрозрачность стёкол: 0 — невидимы, 1 — непрозрачны
     show_edges: bool = True
     vsync: bool = True        # вертикальная синхронизация
+    selected_fish: int | None = None  # номер выбранной рыбы или None
+    follow_camera: bool = False       # True — камера за выбранной рыбой
+    show_neighbor_sphere: bool = True
+    show_force_vectors: bool = True
+    show_all_velocities: bool = False
 
     def set_wall_alpha(self, value):
         """Записывает непрозрачность, ограничивая её допустимым диапазоном."""
         self.wall_alpha = max(WALL_ALPHA_MIN, min(WALL_ALPHA_MAX, float(value)))
+
+    def select_fish(self, index, fish_count):
+        """Выбирает рыбу по номеру. None или номер вне [0; fish_count) снимает выбор."""
+        if index is None or not 0 <= index < fish_count:
+            self.selected_fish = None
+        else:
+            self.selected_fish = int(index)
 
 
 @dataclass

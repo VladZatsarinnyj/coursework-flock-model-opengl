@@ -199,3 +199,29 @@ def seaweed_segment():
     plate_a = _quad((0, 0, 1), [(-0.5, 0, 0), (0.5, 0, 0), (0.5, 1, 0), (-0.5, 1, 0)])
     plate_b = _quad((1, 0, 0), [(0, 0, 0.5), (0, 0, -0.5), (0, 1, -0.5), (0, 1, 0.5)])
     return plate_a + plate_b
+
+
+def circle_points(center, radius, axis_u, axis_v, segments):
+    """Точки окружности в плоскости, натянутой на единичные векторы axis_u и axis_v:
+        p(φ) = center + radius·(cos φ·u + sin φ·v),  φ = 2π·k / segments
+    Последняя точка совпадает с первой, чтобы окружность была замкнутой.
+    """
+    points = []
+    for k in range(segments + 1):
+        angle = 2.0 * math.pi * k / segments
+        offset = add(scale(axis_u, math.cos(angle)), scale(axis_v, math.sin(angle)))
+        points.append(add(center, scale(offset, radius)))
+    return points
+
+
+def sphere_outline(center, radius, segments):
+    """Каркас сферы — три взаимно перпендикулярные окружности (как гироскоп).
+
+    Возвращает список отрезков (начало, конец) для отрисовки линиями.
+    """
+    x, y, z = (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)
+    segments_list = []
+    for axis_u, axis_v in ((x, y), (y, z), (z, x)):
+        points = circle_points(center, radius, axis_u, axis_v, segments)
+        segments_list.extend(zip(points, points[1:]))
+    return segments_list
