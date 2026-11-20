@@ -10,28 +10,28 @@ from aquarium.mathutils import add, scale, sub
 
 @dataclass
 class Rock:
-    center: tuple    # центр сферы; нижняя часть сферы скрыта под песком
+    center: tuple
     radius: float
     color: tuple
-    shape_seed: int  # от этого числа зависят неровности камня (см. geometry.rock)
+    shape_seed: int
 
 
 @dataclass
 class Seaweed:
-    base: tuple            # точка крепления на дне
+    base: tuple
     segment_count: int
     segment_length: float
-    sway_direction: tuple  # горизонтальное направление колебаний, единичный вектор
-    phase: float           # сдвиг фазы: водоросли качаются не синхронно
+    sway_direction: tuple
+    phase: float
     color: tuple
 
 
 @dataclass
 class Bubble:
-    base_x: float  # горизонтальное положение, вокруг которого пузырёк покачивается
+    base_x: float
     base_z: float
-    y: float       # высота
-    speed: float   # скорость подъёма, единиц в секунду
+    y: float
+    speed: float
     radius: float
     phase: float
 
@@ -50,27 +50,21 @@ class Scene:
 
     def __init__(self):
         self.random = random.Random(config.SCENE_RANDOM_SEED)
-        self.time = 0.0  # время сцены, секунды; на паузе не идёт
+        self.time = 0.0
         self.sway_strength = config.SWAY_STRENGTH_DEFAULT
         self.rocks = []
         self.seaweed = []
         self.bubbles = []
-        # Номер версии камней: увеличивается при каждом изменении, и отрисовка
-        # по нему понимает, что сетки камней надо построить заново.
         self.rocks_version = 0
         self.set_rock_count(config.ROCK_COUNT_DEFAULT)
         self.set_seaweed_count(config.SEAWEED_COUNT_DEFAULT)
         self.set_bubble_count(config.BUBBLE_COUNT_DEFAULT)
-        # Корм — облачко хлопьев: смещения хлопьев от центра выбираются один раз.
-        # Это делается последним, чтобы расстановка камней и водорослей не изменилась.
         self.food_offsets = [self._random_offset(config.FOOD_CLUSTER_RADIUS) for _ in range(config.FOOD_FLAKES)]
-        self.food_eaten = [False] * config.FOOD_FLAKES  # какие хлопья текущей порции съедены
-        self.food_time_offset = 0.0    # сдвиг по траектории: новая порция появляется в другом месте
-        self.food_respawn_timer = 0.0  # больше нуля — порция съедена, новая появится через это время
-        self.portion_age = 0.0         # сколько секунд текущая порция находится в аквариуме
-        self.search_times = []         # за сколько секунд стая съела каждую порцию
-
-    # --- Размещение на дне ---
+        self.food_eaten = [False] * config.FOOD_FLAKES
+        self.food_time_offset = 0.0
+        self.food_respawn_timer = 0.0
+        self.portion_age = 0.0
+        self.search_times = []
 
     def _random_floor_point(self, margin):
         """Случайная точка на дне, не ближе margin к стёклам."""
@@ -96,8 +90,6 @@ class Scene:
         return all(horizontal_distance(point, rock.center) >= rock.radius + clearance
                    for rock in self.rocks)
 
-    # --- Камни ---
-
     def set_rock_count(self, count):
         """Добавляет камни в свободные места или убирает лишние с конца списка."""
         count = _clamp_count(count, config.ROCK_COUNT_RANGE)
@@ -105,7 +97,7 @@ class Scene:
         while len(self.rocks) < count:
             rock = self._new_rock()
             if rock is None:
-                break  # свободного места не нашлось: камней будет меньше, чем просили
+                break
             self.rocks.append(rock)
         self.rocks_version += 1
         self._move_plants_out_of_rocks()
@@ -126,13 +118,11 @@ class Scene:
             if point is not None:
                 break
             if radius <= min_radius:
-                return None  # не поместился даже самый маленький камень
+                return None
             radius = max(min_radius, radius - config.ROCK_SHRINK_STEP)
         center = (point[0], config.ROCK_CENTER_HEIGHT * radius, point[2])
         return Rock(center, radius, self.random.choice(config.ROCK_COLORS),
                     self.random.randrange(1_000_000))
-
-    # --- Водоросли ---
 
     def set_seaweed_count(self, count):
         count = _clamp_count(count, config.SEAWEED_COUNT_RANGE)
@@ -172,7 +162,6 @@ class Scene:
                 replacement = self._new_plant()
                 if replacement is not None:
                     self.seaweed[i] = replacement
-        # Если свободного места не нашлось, водоросль под камнем просто убирается.
         self.seaweed = [plant for plant in self.seaweed if self._clear_of_rocks(plant.base, 0.3)]
 
     def set_sway_strength(self, value):
@@ -203,8 +192,6 @@ class Scene:
             for k in range(n):
                 angle += self.sway_strength * config.SEAWEED_SEGMENT_ANGLE * math.sin(
                     config.SEAWEED_SWAY_FREQUENCY * self.time + plant.phase - config.SEAWEED_WAVE_LAG * k)
-                # Направление сегмента: отклонение на угол angle от вертикали
-                # в плоскости, заданной вертикалью и направлением колебаний.
                 direction = add(scale(plant.sway_direction, math.sin(angle)), (0.0, math.cos(angle), 0.0))
                 end = add(start, scale(direction, plant.segment_length))
                 width_start = self._seaweed_width(k / n)
@@ -218,13 +205,10 @@ class Scene:
         """Ширина водоросли на доле высоты t ∈ [0; 1]: линейно сужается к верхушке."""
         return config.SEAWEED_BASE_WIDTH + (config.SEAWEED_TIP_WIDTH - config.SEAWEED_BASE_WIDTH) * t
 
-    # --- Пузырьки ---
-
     def set_bubble_count(self, count):
         count = _clamp_count(count, config.BUBBLE_COUNT_RANGE)
         del self.bubbles[count:]
         while len(self.bubbles) < count:
-            # Начальная высота случайная, чтобы пузырьки не поднимались одной «стеной».
             self.bubbles.append(self._new_bubble(self.random.uniform(0.0, config.AQUARIUM_HEIGHT)))
 
     def _new_bubble(self, y):
@@ -233,7 +217,6 @@ class Scene:
         def fits(point):
             return self._clear_of_rocks(point, radius)
 
-        # Пузырёк поднимается вертикально, поэтому достаточно родить его не над камнем.
         point = self._find_free_point(0.3, fits) or self._random_floor_point(0.3)
         return Bubble(point[0], point[2], y, self.random.uniform(*config.BUBBLE_SPEED_RANGE),
                       radius, self.random.uniform(0.0, 2.0 * math.pi))
@@ -253,8 +236,6 @@ class Scene:
                         bubble.base_z + config.BUBBLE_WOBBLE * math.cos(angle))
             instances.append((position, bubble.radius))
         return instances
-
-    # --- Корм ---
 
     def _random_offset(self, radius):
         """Случайная точка внутри шара радиуса radius (метод проб внутри куба)."""
@@ -317,7 +298,7 @@ class Scene:
                 offset = sub(flake, fish_position)
                 if offset[0] ** 2 + offset[1] ** 2 + offset[2] ** 2 < eat_radius_squared:
                     self.food_eaten[k] = True
-                    break  # одна рыба — одно хлопье за шаг
+                    break
 
         if all(self.food_eaten):
             self.search_times.append(self.portion_age)
@@ -340,8 +321,6 @@ class Scene:
 
     def reset_food_stats(self):
         self.search_times = []
-
-    # --- Шаг времени ---
 
     def step(self, dt):
         """Продвигает время сцены и поднимает пузырьки.

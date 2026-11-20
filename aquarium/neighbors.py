@@ -16,7 +16,7 @@ def find_neighbors_naive(positions, radius):
     чем N·(N − 1), но порядок роста остаётся квадратичным.
     """
     count = len(positions)
-    radius_squared = radius * radius  # сравниваем квадраты, чтобы не вычислять корень
+    radius_squared = radius * radius
     neighbors = [[] for _ in range(count)]
     for i in range(count):
         xi, yi, zi = positions[i]

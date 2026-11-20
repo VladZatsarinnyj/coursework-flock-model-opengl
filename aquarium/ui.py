@@ -8,8 +8,6 @@ from imgui_bundle import imgui
 from aquarium import config
 from aquarium.mathutils import length
 
-# Встроенный шрифт ImGui содержит только латиницу, поэтому загружается
-# первый найденный шрифт с кириллицей.
 FONT_CANDIDATES = [
     Path(imgui_bundle.__file__).parent / "assets" / "fonts" / "Roboto" / "Roboto-Regular.ttf",
     Path("C:/Windows/Fonts/segoeui.ttf"),
@@ -58,7 +56,6 @@ class ControlPanel:
     """
 
     def __init__(self, gpu_name):
-        # Драйвер дописывает служебные сведения: «NVIDIA GeForce RTX 5050/PCIe/SSE2» → до «/» и « (».
         self.gpu_name = gpu_name.split("/")[0].split(" (")[0].strip() or gpu_name
 
     def draw(self, view, simulation, flock, scene, camera, fps_counter):
@@ -66,8 +63,6 @@ class ControlPanel:
         first_use = imgui.Cond_.first_use_ever.value
         imgui.set_next_window_pos(imgui.ImVec2(12, 12), first_use)
         imgui.set_next_window_size(imgui.ImVec2(PANEL_WIDTH, max(300.0, io.display_size.y - 24)), first_use)
-        # Текст после ### не показывается, а служит постоянным именем окна: заголовок
-        # с FPS меняется каждый кадр, а положение и размер окна при этом сохраняются.
         imgui.begin(f"Управление — {fps_counter.fps:.0f} FPS###control_panel", None, 0)
         if _section("Производительность", False):
             self._draw_performance(fps_counter)
@@ -122,8 +117,6 @@ class ControlPanel:
 
     @staticmethod
     def _draw_modes(simulation, flock, scene):
-        # Режимы — независимые добавки к модели Boids, поэтому это флажки, а не выбор одного из трёх.
-        # При смене режима счётчики сбрасываются: каждое число должно относиться к одному режиму.
         changed_avoid, simulation.avoid_rocks = imgui.checkbox("Обход камней", simulation.avoid_rocks)
         imgui.same_line()
         changed_food, simulation.food_enabled = imgui.checkbox("Корм", simulation.food_enabled)
@@ -142,13 +135,11 @@ class ControlPanel:
     @staticmethod
     def _draw_selection(view, flock):
         count = len(flock.fish)
-        # Ползунок «Число рыб» выше в этом же кадре мог убрать выбранную рыбу:
-        # номер проверяется заново, иначе обращение к ней вызвало бы ошибку.
         view.select_fish(view.selected_fish, count)
         current = -1 if view.selected_fish is None else view.selected_fish
         changed, index = imgui.slider_int("Номер рыбы", current, -1, count - 1)
         if changed:
-            view.select_fish(index, count)  # −1 снимает выбор
+            view.select_fish(index, count)
         imgui.text_disabled("Щелчок по рыбе — выбрать, по пустому месту — снять выбор")
 
         if view.selected_fish is None:
@@ -162,7 +153,6 @@ class ControlPanel:
             imgui.same_line()
             _, view.show_force_vectors = imgui.checkbox("Векторы сил", view.show_force_vectors)
             if view.show_force_vectors:
-                # Легенда в две колонки: цвет стрелки — название слагаемого.
                 names = list(config.FORCE_COLORS)
                 for k, name in enumerate(names):
                     if k % 2 == 1:
@@ -170,7 +160,6 @@ class ControlPanel:
                     _color_label(config.FORCE_COLORS[name], f"— {name}")
                 _color_label(config.VELOCITY_COLOR, "— скорость")
 
-        # Камера за рыбой включается только при выбранной рыбе.
         if imgui.radio_button("Внешняя камера", not view.follow_camera):
             view.follow_camera = False
         imgui.same_line()
@@ -182,7 +171,6 @@ class ControlPanel:
 
     @staticmethod
     def _draw_scene(scene, flock):
-        # Готовые составы сцены из задания: удобно для демонстрации и замеров.
         for k, (label, composition) in enumerate(config.TASK_COMPOSITIONS.items()):
             if k > 0:
                 imgui.same_line()
@@ -191,8 +179,6 @@ class ControlPanel:
                 scene.set_seaweed_count(composition["seaweed"])
                 scene.set_rock_count(composition["rocks"])
                 scene.set_bubble_count(composition["bubbles"])
-        # Если для камня не нашлось свободного места, камней станет меньше,
-        # чем выбрано, и ползунок покажет фактическое число.
         changed, count = imgui.slider_int("Камни", len(scene.rocks), *config.ROCK_COUNT_RANGE)
         if changed:
             scene.set_rock_count(count)

@@ -1,30 +1,22 @@
 #version 330 core
 
-// Фрагментный шейдер: освещение по закону Ламберта плюс фоновая подсветка.
-// Общий для всех освещаемых объектов: дна, стенок и рыб. Цвет приходит
-// из вершинного шейдера (у рыб он свой у каждой).
-
-uniform float u_alpha;           // непрозрачность: 1 — непрозрачная поверхность
-uniform vec3 u_light_direction;  // единичный вектор от поверхности к источнику света
+uniform float u_alpha;
+uniform vec3 u_light_direction;
 
 in vec3 v_normal;
 in vec3 v_color;
 
 out vec4 f_color;
 
-const float AMBIENT = 0.35;  // фоновый свет, чтобы теневые стороны не были чёрными
+const float AMBIENT = 0.35;
 
 void main() {
     vec3 normal = normalize(v_normal);
 
-    // Стенки и хвост рыбы видны с обеих сторон. Если камера видит обратную
-    // сторону треугольника, нормаль разворачивается к камере.
     if (!gl_FrontFacing) {
         normal = -normal;
     }
 
-    // Закон Ламберта: яркость пропорциональна косинусу угла между нормалью
-    // и направлением на свет. Отрицательные значения (свет сзади) обнуляются.
     float diffuse = max(dot(normal, u_light_direction), 0.0);
     vec3 color = v_color * (AMBIENT + (1.0 - AMBIENT) * diffuse);
 

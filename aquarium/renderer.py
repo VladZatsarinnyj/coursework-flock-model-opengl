@@ -10,12 +10,9 @@ from aquarium.mathutils import add, length, normalize, scale, to_opengl
 
 SHADER_DIR = Path(__file__).parent / "shaders"
 
-# Дно опущено на 0.02 ниже нижних рёбер. Если дно и рёбра лежат в одной плоскости,
-# их глубины совпадают, тест глубины проходит то одно, то другое, и рёбра мерцают
-# (это явление называют z-fighting).
 FLOOR_OFFSET = 0.02
 
-LIT_LAYOUT = ("3f 3f", ("in_position", "in_normal"))  # вершина: позиция и нормаль
+LIT_LAYOUT = ("3f 3f", ("in_position", "in_normal"))
 
 
 def load_program(ctx, vertex_name, fragment_name):
@@ -35,10 +32,8 @@ class Mesh:
 
     def __init__(self, ctx, program, vertices, layout, attributes, mode):
         self.program = program
-        self.mode = mode  # moderngl.TRIANGLES или moderngl.LINES
-        # array("f", ...) упаковывает числа Python в 4-байтовые float, как ожидает видеокарта.
+        self.mode = mode
         self.vbo = ctx.buffer(array("f", vertices).tobytes())
-        # layout "3f 3f" — у вершины 3 числа позиции и 3 числа нормали.
         self.vao = ctx.vertex_array(program, [(self.vbo, layout, *attributes)])
 
     def render(self):
@@ -63,11 +58,9 @@ class InstancedMesh:
 
     def __init__(self, ctx, program, vertices, instance_layout, instance_attributes, max_instances):
         self.program = program
-        # "3f 3f 1f" → 3 + 3 + 1 = 7 чисел на экземпляр.
         self.floats_per_instance = sum(int(part[:-1]) for part in instance_layout.split())
         self.max_instances = max_instances
         self.vbo = ctx.buffer(array("f", vertices).tobytes())
-        # Буфер экземпляров выделяется сразу под максимальное число объектов (4 байта на число).
         self.instances = ctx.buffer(reserve=max_instances * self.floats_per_instance * 4)
         self.vao = ctx.vertex_array(program, [
             (self.vbo, LIT_LAYOUT[0], *LIT_LAYOUT[1]),
@@ -149,7 +142,6 @@ class SceneRenderer:
         self.ctx = ctx
         self.lit = load_program(ctx, "lit", "lit")
         self.unlit = load_program(ctx, "unlit", "unlit")
-        # У рыб, водорослей и сфер (пузырьков и корма) свои вершинные шейдеры и общий фрагментный.
         self.fish_program = load_program(ctx, "fish", "lit")
         self.seaweed_program = load_program(ctx, "seaweed", "lit")
         self.sphere_program = load_program(ctx, "bubble", "lit")
@@ -179,8 +171,6 @@ class SceneRenderer:
             "3f 1f", ("in_center", "in_radius"),
             max_instances=config.BUBBLE_COUNT_RANGE[1],
         )
-        # Корм рисуется той же моделью сферы, но со своим буфером экземпляров:
-        # данные пузырьков и корма в одном кадре не должны затирать друг друга.
         self.food = InstancedMesh(
             ctx, self.sphere_program, geometry.unit_sphere(),
             "3f 1f", ("in_center", "in_radius"),
@@ -189,22 +179,19 @@ class SceneRenderer:
 
         self.helper_lines = DynamicLines(ctx, self.lines_program, config.MAX_LINE_VERTICES)
 
-        # Камни неподвижны, и у каждого своя форма. Их сетки строятся заново
-        # только когда меняется набор камней (scene.rocks_version).
-        self.rock_meshes = []  # пары (сетка, цвет)
+        self.rock_meshes = []
         self.rocks_version = None
 
         self.light_direction = normalize(config.LIGHT_DIRECTION)
 
     def render(self, camera, width, height, view, simulation, flock, scene):
         if width == 0 or height == 0:
-            return  # окно свёрнуто: рисовать некуда
+            return
 
         ctx = self.ctx
         ctx.viewport = (0, 0, width, height)
-        ctx.clear(*config.BACKGROUND_COLOR, 1.0)  # очищает буфер цвета и буфер глубины
+        ctx.clear(*config.BACKGROUND_COLOR, 1.0)
 
-        # Матрицы вида и проекции одинаковы для всех объектов кадра.
         view_matrix = to_opengl(camera.view_matrix())
         projection_matrix = to_opengl(camera.projection_matrix(width / height))
         for program in self.programs:
@@ -217,9 +204,6 @@ class SceneRenderer:
         if scene.rocks_version != self.rocks_version:
             self._rebuild_rocks(scene.rocks, scene.rocks_version)
 
-        # Проход 1: непрозрачные объекты. Каждый проход явно включает нужные
-        # режимы, потому что ImGui в конце прошлого кадра мог их изменить.
-        # Отсечение граней выключено: пластины водорослей и хвосты видны с обеих сторон.
         ctx.enable_only(moderngl.DEPTH_TEST)
         self._draw(self.floor, config.SAND_COLOR, 1.0)
         for mesh, color in self.rock_meshes:
@@ -232,26 +216,16 @@ class SceneRenderer:
         food = scene.food_position() if food_present else None
         self._draw_helper_lines(view, simulation, flock, scene, food)
 
-        # Проходы 2–4: прозрачные объекты. Смешивание: цвет = α·новый + (1 − α)·уже_нарисованный.
         ctx.enable_only(moderngl.DEPTH_TEST | moderngl.BLEND | moderngl.CULL_FACE)
         ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        # Прозрачные объекты проверяют глубину, но не записывают её: иначе ближнее
-        # стекло закрыло бы всё, что за ним будет нарисовано позже.
         ctx.fbo.depth_mask = False
-        # Нормали стенок смотрят наружу, поэтому дальние стенки повёрнуты к камере
-        # обратной стороной. Отсекаем лицевые — остаются дальние стенки.
         ctx.cull_face = "front"
         self._draw(self.walls, config.GLASS_COLOR, view.wall_alpha)
-        # Пузырьки — между дальними и ближними стенками. Отсекаются задние половинки
-        # сфер, чтобы пузырёк не смешивался сам с собой.
         ctx.cull_face = "back"
         self._draw_spheres(self.bubbles, scene.bubble_instances(), config.BUBBLE_COLOR, config.BUBBLE_ALPHA)
         self._draw(self.walls, config.GLASS_COLOR, view.wall_alpha)
-        # Запись глубины обязательно включается обратно: очистка буфера глубины
-        # в начале следующего кадра тоже подчиняется этой маске.
         ctx.fbo.depth_mask = True
 
-        # Проход 5: рёбра.
         ctx.enable_only(moderngl.DEPTH_TEST)
         if view.show_edges:
             self._draw(self.edges, config.EDGE_COLOR, 1.0)
@@ -268,7 +242,6 @@ class SceneRenderer:
         self.rocks_version = version
 
     def _draw_seaweed(self, scene):
-        # Данные всех сегментов одним списком: начало, конец, две ширины, цвет.
         data = []
         for start, end, width_start, width_end, color in scene.seaweed_segments():
             data.extend(start)
@@ -280,8 +253,6 @@ class SceneRenderer:
         self.seaweed.render()
 
     def _draw_fish(self, flock, time, selected):
-        # Данные всех рыб одним списком: x y z, vx vy vz, r g b для каждой.
-        # Выбранная рыба белая, её соседи — голубые: видно, на кого она реагирует.
         neighbors = set(flock.neighbors[selected]) if selected is not None else set()
         data = []
         for i, fish in enumerate(flock.fish):
@@ -311,8 +282,6 @@ class SceneRenderer:
         if selected is not None:
             fish = flock.fish[selected]
             if view.show_neighbor_sphere:
-                # Радиус тот же, что при поиске соседей: внутри сферы — ровно те рыбы,
-                # что подсвечены голубым и посчитаны в панели.
                 for start, end in geometry.sphere_outline(fish.position, flock.params.neighbor_radius,
                                                           config.NEIGHBOR_SPHERE_SEGMENTS):
                     segments.append((start, end, config.NEIGHBOR_SPHERE_COLOR))

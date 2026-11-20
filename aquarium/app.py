@@ -4,9 +4,6 @@ import ctypes
 import math
 import time
 
-# imgui_bundle импортируется раньше glfw. В imgui_bundle есть своя копия библиотеки
-# GLFW, с которой работает интерфейс, и при импорте он указывает пакету glfw на неё.
-# Если импортировать glfw первым, в программе окажутся две разные копии GLFW.
 from imgui_bundle import imgui
 import glfw
 import moderngl
@@ -24,13 +21,13 @@ class FpsCounter:
     """Раз в полсекунды обновляет FPS, среднее время кадра, среднее время шага симуляции
     и скорость симуляции."""
 
-    UPDATE_INTERVAL = 0.5  # секунды
+    UPDATE_INTERVAL = 0.5
 
     def __init__(self):
         self.fps = 0.0
         self.frame_time_ms = 0.0
         self.step_time_ms = 0.0
-        self.simulation_speed = 1.0  # доля реального времени: 1.0 — стая успевает, 0.5 — вдвое медленнее
+        self.simulation_speed = 1.0
         self._frames = 0
         self._elapsed = 0.0
         self._steps = 0
@@ -44,14 +41,10 @@ class FpsCounter:
         self._frames += 1
         self._elapsed += frame_time
         if self._elapsed >= self.UPDATE_INTERVAL:
-            # FPS = число кадров / затраченное время. Это то же, что 1 / среднее время кадра.
             self.fps = self._frames / self._elapsed
             self.frame_time_ms = 1000.0 * self._elapsed / self._frames
             if self._steps > 0:
                 self.step_time_ms = 1000.0 * self._steps_duration / self._steps
-            # Сколько модельного времени прожито за прошедшее реальное время.
-            # Чуть больше 1 бывает только из-за границы окна усреднения, поэтому
-            # значение ограничено единицей. На паузе скорость равна 0.
             self.simulation_speed = min(1.0, self._steps * config.SIM_DT / self._elapsed)
             self._frames = 0
             self._elapsed = 0.0
@@ -61,8 +54,6 @@ class FpsCounter:
 
 class App:
     def __init__(self):
-        # Пока ничего не создано. close() освобождает только то, что успели создать,
-        # поэтому её можно вызвать даже при ошибке на середине запуска.
         self.window = None
         self.ctx = None
         self.imgui_ready = False
@@ -79,24 +70,23 @@ class App:
         self.simulation = config.SimulationSettings()
         self.flock = Flock(FlockParams())
         self.scene = Scene()
-        self.camera = OrbitCamera()            # внешняя камера
-        self.follow_camera = FollowCamera()    # внутренняя камера — за выбранной рыбой
-        self.active_camera = self.camera       # через какую камеру рисуется кадр
-        self.press_position = None             # где была нажата левая кнопка мыши
-        self.keys_down = set()                 # какие горячие клавиши были нажаты в прошлом кадре
+        self.camera = OrbitCamera()
+        self.follow_camera = FollowCamera()
+        self.active_camera = self.camera
+        self.press_position = None
+        self.keys_down = set()
         self.panel = ControlPanel(gpu_name=self.ctx.info["GL_RENDERER"])
         self.fps_counter = FpsCounter()
-        self.time_accumulator = 0.0  # время, ещё не «прожитое» симуляцией
+        self.time_accumulator = 0.0
 
     def _create_window(self):
         if not glfw.init():
             raise RuntimeError("Не удалось инициализировать GLFW")
 
-        # Запрашиваем контекст OpenGL 3.3 Core Profile — без устаревших функций.
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)  # требуется на macOS
+        glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)
         glfw.window_hint(glfw.SAMPLES, config.MSAA_SAMPLES)
 
         title = f"{config.WINDOW_TITLE} — версия {__version__}"
@@ -104,19 +94,14 @@ class App:
         if not self.window:
             raise RuntimeError("Не удалось создать окно с OpenGL 3.3. Обновите драйвер видеокарты.")
 
-        # Контекст OpenGL — состояние, которому принадлежат все буферы и шейдеры.
-        # Он становится текущим, и moderngl подключается к нему.
         glfw.make_context_current(self.window)
-        glfw.swap_interval(1)  # вертикальная синхронизация включена
+        glfw.swap_interval(1)
         self.ctx = moderngl.create_context(require=330)
 
     def _init_imgui(self):
         imgui.create_context()
-        # Клавиатурная навигация по панели выключена: иначе панель в фокусе забирает пробел, H, R себе.
         imgui.get_io().config_flags &= ~imgui.ConfigFlags_.nav_enable_keyboard.value
         imgui.style_colors_dark()
-        # Бэкенд GLFW написан на C++ и принимает адрес окна в памяти.
-        # True — бэкенд сам подписывается на события мыши и клавиатуры.
         window_address = ctypes.cast(self.window, ctypes.c_void_p).value
         imgui.backends.glfw_init_for_opengl(window_address, True)
         imgui.backends.opengl3_init("#version 330")
@@ -128,7 +113,6 @@ class App:
         previous_time = glfw.get_time()
 
         while not glfw.window_should_close(self.window):
-            # 1. События ОС: мышь, клавиатура, изменение размера, закрытие окна.
             glfw.poll_events()
 
             now = glfw.get_time()
@@ -136,7 +120,6 @@ class App:
             previous_time = now
             self.fps_counter.add_frame(frame_time)
 
-            # 2. Новый кадр интерфейса, ввод, панель управления.
             imgui.backends.opengl3_new_frame()
             imgui.backends.glfw_new_frame()
             imgui.new_frame()
@@ -150,22 +133,17 @@ class App:
                 glfw.swap_interval(1 if self.settings.vsync else 0)
                 applied_vsync = self.settings.vsync
 
-            # 3. Симуляция стаи.
             self._update_simulation(frame_time)
 
-            # 4. Выбранная рыба и камера. Рыб могло стать меньше — тогда выбор снимается.
             self.settings.select_fish(self.settings.selected_fish, len(self.flock.fish))
             self.active_camera = self._choose_camera(min(frame_time, config.MAX_FRAME_TIME))
 
-            # 5. Сцена, затем интерфейс поверх неё.
             width, height = glfw.get_framebuffer_size(self.window)
             self.renderer.render(self.active_camera, width, height, self.settings, self.simulation,
                                  self.flock, self.scene)
             imgui.render()
             imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
 
-            # 6. Показ кадра. Рисование шло в невидимый задний буфер,
-            #    теперь буферы меняются местами (двойная буферизация).
             glfw.swap_buffers(self.window)
 
     def _update_simulation(self, frame_time):
@@ -217,7 +195,7 @@ class App:
             self.press_position = None
             return
 
-        if imgui.is_mouse_clicked(0):  # 0 — левая кнопка
+        if imgui.is_mouse_clicked(0):
             self.press_position = (io.mouse_pos.x, io.mouse_pos.y)
         if imgui.is_mouse_released(0) and self.press_position is not None:
             moved = math.hypot(io.mouse_pos.x - self.press_position[0], io.mouse_pos.y - self.press_position[1])
@@ -225,7 +203,7 @@ class App:
                 self._select_fish_at(io.mouse_pos.x, io.mouse_pos.y, io.display_size.x, io.display_size.y)
             self.press_position = None
 
-        if self.active_camera is self.camera:  # мышью управляется только внешняя камера
+        if self.active_camera is self.camera:
             if imgui.is_mouse_down(0):
                 self.camera.rotate(-io.mouse_delta.x * config.MOUSE_ROTATION_SPEED,
                                    io.mouse_delta.y * config.MOUSE_ROTATION_SPEED)
@@ -251,7 +229,7 @@ class App:
         pressed = {key: self._key_pressed(key)
                    for key in (glfw.KEY_SPACE, glfw.KEY_ESCAPE, glfw.KEY_H, glfw.KEY_C, glfw.KEY_R)}
         if imgui.get_io().want_text_input:
-            return  # идёт ввод числа в поле панели (Ctrl + щелчок) — клавиши для него
+            return
         if pressed[glfw.KEY_SPACE]:
             self.simulation.paused = not self.simulation.paused
         if pressed[glfw.KEY_ESCAPE]:
@@ -276,7 +254,7 @@ class App:
         if self.settings.follow_camera and selected is not None:
             self.follow_camera.update(selected, self.flock.fish[selected], dt)
             return self.follow_camera
-        self.follow_camera.fish_index = None  # при следующем включении камера сразу встанет за рыбой
+        self.follow_camera.fish_index = None
         return self.camera
 
     def close(self):
