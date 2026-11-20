@@ -11,7 +11,7 @@ from imgui_bundle import imgui
 import glfw
 import moderngl
 
-from aquarium import config
+from aquarium import __version__, config
 from aquarium.camera import FollowCamera, OrbitCamera
 from aquarium.flock import Flock, FlockParams
 from aquarium.picking import mouse_ray, pick_fish
@@ -83,6 +83,7 @@ class App:
         self.follow_camera = FollowCamera()    # внутренняя камера — за выбранной рыбой
         self.active_camera = self.camera       # через какую камеру рисуется кадр
         self.press_position = None             # где была нажата левая кнопка мыши
+        self.keys_down = set()                 # какие горячие клавиши были нажаты в прошлом кадре
         self.panel = ControlPanel(gpu_name=self.ctx.info["GL_RENDERER"])
         self.fps_counter = FpsCounter()
         self.time_accumulator = 0.0  # время, ещё не «прожитое» симуляцией
@@ -98,8 +99,8 @@ class App:
         glfw.window_hint(glfw.OPENGL_FORWARD_COMPAT, glfw.TRUE)  # требуется на macOS
         glfw.window_hint(glfw.SAMPLES, config.MSAA_SAMPLES)
 
-        self.window = glfw.create_window(config.WINDOW_WIDTH, config.WINDOW_HEIGHT,
-                                         config.WINDOW_TITLE, None, None)
+        title = f"{config.WINDOW_TITLE} — версия {__version__}"
+        self.window = glfw.create_window(config.WINDOW_WIDTH, config.WINDOW_HEIGHT, title, None, None)
         if not self.window:
             raise RuntimeError("Не удалось создать окно с OpenGL 3.3. Обновите драйвер видеокарты.")
 
@@ -111,6 +112,8 @@ class App:
 
     def _init_imgui(self):
         imgui.create_context()
+        # Клавиатурная навигация по панели выключена: иначе панель в фокусе забирает пробел, H, R себе.
+        imgui.get_io().config_flags &= ~imgui.ConfigFlags_.nav_enable_keyboard.value
         imgui.style_colors_dark()
         # Бэкенд GLFW написан на C++ и принимает адрес окна в памяти.
         # True — бэкенд сам подписывается на события мыши и клавиатуры.
@@ -138,8 +141,10 @@ class App:
             imgui.backends.glfw_new_frame()
             imgui.new_frame()
             self._handle_mouse()
-            self.panel.draw(self.settings, self.simulation, self.flock, self.scene, self.camera,
-                            self.fps_counter)
+            self._handle_keyboard()
+            if self.settings.show_panel:
+                self.panel.draw(self.settings, self.simulation, self.flock, self.scene, self.camera,
+                                self.fps_counter)
 
             if self.settings.vsync != applied_vsync:
                 glfw.swap_interval(1 if self.settings.vsync else 0)
@@ -226,6 +231,37 @@ class App:
                                    io.mouse_delta.y * config.MOUSE_ROTATION_SPEED)
             if io.mouse_wheel != 0:
                 self.camera.zoom(config.MOUSE_ZOOM_STEP ** io.mouse_wheel)
+
+    def _key_pressed(self, key):
+        """True только в том кадре, когда клавишу нажали, а не всё время, пока её держат.
+
+        GLFW сообщает лишь, нажата ли клавиша сейчас. Нажатие — это переход
+        «в прошлом кадре отпущена → сейчас нажата», поэтому состояние запоминается.
+        """
+        down = glfw.get_key(self.window, key) == glfw.PRESS
+        was_down = key in self.keys_down
+        if down:
+            self.keys_down.add(key)
+        else:
+            self.keys_down.discard(key)
+        return down and not was_down
+
+    def _handle_keyboard(self):
+        """Горячие клавиши для демонстрации: пробел, Esc, H, C, R."""
+        pressed = {key: self._key_pressed(key)
+                   for key in (glfw.KEY_SPACE, glfw.KEY_ESCAPE, glfw.KEY_H, glfw.KEY_C, glfw.KEY_R)}
+        if imgui.get_io().want_text_input:
+            return  # идёт ввод числа в поле панели (Ctrl + щелчок) — клавиши для него
+        if pressed[glfw.KEY_SPACE]:
+            self.simulation.paused = not self.simulation.paused
+        if pressed[glfw.KEY_ESCAPE]:
+            self.settings.select_fish(None, len(self.flock.fish))
+        if pressed[glfw.KEY_H]:
+            self.settings.show_panel = not self.settings.show_panel
+        if pressed[glfw.KEY_C]:
+            self.settings.follow_camera = not self.settings.follow_camera
+        if pressed[glfw.KEY_R]:
+            self.camera.reset()
 
     def _select_fish_at(self, x, y, width, height):
         """Выбирает рыбу под курсором; щелчок по пустому месту снимает выбор."""
