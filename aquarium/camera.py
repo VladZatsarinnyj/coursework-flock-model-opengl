@@ -80,13 +80,13 @@ class FollowCamera:
     def __init__(self):
         self.direction = (1.0, 0.0, 0.0)
         self.fish_position = (0.0, 0.0, 0.0)
-        self.fish_index = None  # за какой рыбой камера следила в прошлом кадре
+        self.fish_index = None
 
     def update(self, fish_index, fish, dt):
         speed = length(fish.velocity)
         heading = scale(fish.velocity, 1.0 / speed) if speed > 1e-9 else self.direction
         if fish_index != self.fish_index:
-            self.direction = heading  # выбрана другая рыба: сразу смотреть по её курсу
+            self.direction = heading
             self.fish_index = fish_index
         else:
             k = 1.0 - math.exp(-config.FOLLOW_SMOOTHING * dt)
@@ -99,7 +99,7 @@ class FollowCamera:
     def _limit_pitch(direction):
         horizontal = math.hypot(direction[0], direction[2])
         if horizontal < 1e-6:
-            return (1.0, 0.0, 0.0)  # строго вертикально: горизонтальное направление не определено
+            return (1.0, 0.0, 0.0)
         max_pitch = math.radians(config.FOLLOW_MAX_PITCH_DEG)
         pitch = max(-max_pitch, min(max_pitch, math.atan2(direction[1], horizontal)))
         return (direction[0] / horizontal * math.cos(pitch),

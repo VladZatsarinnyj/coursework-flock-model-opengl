@@ -51,8 +51,8 @@ def ray_sphere_distance(origin, direction, center, radius):
     if t - half_chord >= 0.0:
         return t - half_chord
     if t + half_chord >= 0.0:
-        return 0.0  # камера внутри сферы
-    return None  # сфера позади камеры
+        return 0.0
+    return None
 
 
 def pick_fish(origin, direction, fish_list):

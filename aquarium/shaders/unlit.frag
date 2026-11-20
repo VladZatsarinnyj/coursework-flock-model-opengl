@@ -1,7 +1,5 @@
 #version 330 core
 
-// Фрагментный шейдер с постоянным цветом.
-
 uniform vec3 u_color;
 uniform float u_alpha;
 

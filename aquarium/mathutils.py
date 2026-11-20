@@ -7,8 +7,6 @@
 import math
 
 
-# --- Векторы ---
-
 def add(a, b):
     """Сумма векторов a + b."""
     return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
@@ -57,8 +55,6 @@ def clamp_length(v, max_length):
         return scale(v, max_length / n)
     return v
 
-
-# --- Матрицы ---
 
 def perspective(fov_y_deg, aspect, near, far):
     """Матрица перспективной проекции.

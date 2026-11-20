@@ -20,12 +20,12 @@ def _clamp(value, value_range):
 class FlockParams:
     """Параметры модели, которые пользователь меняет в панели."""
 
-    separation_weight: float = 1.5  # разделение: не сближаться с соседями
-    alignment_weight: float = 1.5   # выравнивание: плыть как соседи
-    cohesion_weight: float = 0.8    # сплочённость: держаться центра соседей
-    neighbor_radius: float = 3.0    # кого рыба считает соседями
-    max_speed: float = 4.0          # единиц сцены в секунду
-    food_weight: float = 1.5        # притяжение к корму (действует, если корм включён)
+    separation_weight: float = 1.5
+    alignment_weight: float = 1.5
+    cohesion_weight: float = 0.8
+    neighbor_radius: float = 3.0
+    max_speed: float = 4.0
+    food_weight: float = 1.5
 
     def clamp(self):
         """Приводит все параметры к допустимым диапазонам из config."""
@@ -39,8 +39,8 @@ class FlockParams:
 
 @dataclass
 class Fish:
-    position: tuple  # (x, y, z)
-    velocity: tuple  # (vx, vy, vz), единиц в секунду
+    position: tuple
+    velocity: tuple
 
 
 class Flock:
@@ -50,23 +50,18 @@ class Flock:
         self.params = params
         self.random = random.Random(config.RANDOM_SEED)
         self.fish = []
-        self.neighbors = []  # neighbors[i] — номера соседей рыбы i на последнем шаге
-        # Область, в которой может находиться центр рыбы: аквариум минус зазор до стекла.
+        self.neighbors = []
         self.low = add(config.AQUARIUM_MIN, (config.WALL_PADDING,) * 3)
         self.high = sub(config.AQUARIUM_MAX, (config.WALL_PADDING,) * 3)
-        # Счётчик касаний камней — показатель для сравнения режимов движения.
         self.rock_contacts = 0
-        self.contact_time = 0.0     # модельное время, за которое накоплен счётчик, секунды
-        self._touching = set()      # номера рыб, касавшихся камня на прошлом шаге
+        self.contact_time = 0.0
+        self._touching = set()
         self.set_count(config.FISH_COUNT_DEFAULT)
-
-    # --- Состав стаи ---
 
     def _random_fish(self):
         position = tuple(self.random.uniform(self.low[k], self.high[k]) for k in range(3))
-        # Направление из двух углов: азимут yaw и небольшой наклон pitch.
         yaw = self.random.uniform(0.0, 2.0 * math.pi)
-        pitch = self.random.uniform(-0.3, 0.3)  # почти горизонтально, как у настоящих рыб
+        pitch = self.random.uniform(-0.3, 0.3)
         speed = 0.5 * (config.FISH_MIN_SPEED + self.params.max_speed)
         direction = (math.cos(pitch) * math.cos(yaw), math.sin(pitch), math.cos(pitch) * math.sin(yaw))
         return Fish(position, scale(direction, speed))
@@ -84,8 +79,6 @@ class Flock:
         """Раскладывает всех рыб заново в случайные места."""
         self.fish = [self._random_fish() for _ in self.fish]
         self._touching = set()
-
-    # --- Шаг симуляции ---
 
     def step(self, dt, rocks=(), avoid_rocks=False, food=None):
         """Продвигает стаю на время dt.
@@ -106,16 +99,13 @@ class Flock:
 
         touching = set()
         for i, (fish, acceleration) in enumerate(zip(self.fish, accelerations)):
-            # Полунеявный метод Эйлера: сначала скорость, затем положение по новой скорости.
             velocity = add(fish.velocity, scale(acceleration, dt))
             fish.velocity = self._limit_speed(velocity)
             fish.position = add(fish.position, scale(fish.velocity, dt))
             if push_out_of_rocks(fish, rocks):
                 touching.add(i)
-            keep_inside(fish, self.low, self.high)  # последней, чтобы рыба гарантированно осталась в аквариуме
+            keep_inside(fish, self.low, self.high)
 
-        # Касание считается один раз — в момент, когда рыба впервые упёрлась в камень,
-        # а не на каждом шаге, пока она скользит по его поверхности.
         self.rock_contacts += len(touching - self._touching)
         self._touching = touching
         self.contact_time += dt
@@ -149,8 +139,6 @@ class Flock:
                 other = self.fish[j]
                 away = sub(fish.position, other.position)
                 distance_squared = dot(away, away)
-                # Две рыбы точно в одной точке: направление не определено. Сила
-                # столкновения не даёт им сблизиться, поэтому на практике это не случается.
                 if distance_squared > 1e-9:
                     separation = add(separation, scale(away, 1.0 / distance_squared))
                     collision = add(collision, collision_force(away, math.sqrt(distance_squared)))
@@ -215,14 +203,12 @@ class Flock:
         """Держит скорость в пределах [FISH_MIN_SPEED; max_speed], сохраняя направление."""
         speed = length(velocity)
         if speed < 1e-9:
-            return (config.FISH_MIN_SPEED, 0.0, 0.0)  # нулевая скорость: направление не определено
+            return (config.FISH_MIN_SPEED, 0.0, 0.0)
         if speed > self.params.max_speed:
             return scale(velocity, self.params.max_speed / speed)
         if speed < config.FISH_MIN_SPEED:
             return scale(velocity, config.FISH_MIN_SPEED / speed)
         return velocity
-
-    # --- Показатели стаи (для панели и исследования) ---
 
     def reset_contact_stats(self):
         self.rock_contacts = 0

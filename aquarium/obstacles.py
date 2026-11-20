@@ -82,7 +82,7 @@ def push_out_of_rocks(fish, rocks):
     for rock in rocks:
         min_distance = rock.radius + config.FISH_ROCK_PADDING
         if fish.position[1] > rock.center[1] + min_distance:
-            continue  # рыба выше камня
+            continue
         away = sub(fish.position, rock.center)
         distance_squared = dot(away, away)
         if distance_squared >= min_distance * min_distance or distance_squared < 1e-12:
@@ -116,16 +116,16 @@ def avoidance_force(fish, rocks):
         return (0.0, 0.0, 0.0)
     forward = scale(fish.velocity, 1.0 / speed)
 
-    nearest = None  # (t, R', q − c) ближайшего камня на пути
+    nearest = None
     for rock in rocks:
         safe_radius = rock.radius + config.FISH_ROCK_PADDING + config.AVOID_CLEARANCE
         t = dot(sub(rock.center, fish.position), forward)
         if t <= 0.0 or t - safe_radius > config.AVOID_LOOKAHEAD:
-            continue  # камень позади или слишком далеко
+            continue
         closest = add(fish.position, scale(forward, t))
         offset = sub(closest, rock.center)
         if dot(offset, offset) >= safe_radius * safe_radius:
-            continue  # луч проходит мимо камня
+            continue
         if nearest is None or t < nearest[0]:
             nearest = (t, safe_radius, offset)
 

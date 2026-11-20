@@ -67,13 +67,13 @@ def box_edges(low, high):
     x0, y0, z0 = low
     x1, y1, z1 = high
     corners = [
-        (x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1),  # 0–3: нижний прямоугольник
-        (x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1),  # 4–7: верхний прямоугольник
+        (x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1),
+        (x0, y1, z0), (x1, y1, z0), (x1, y1, z1), (x0, y1, z1),
     ]
     edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),  # низ
-        (4, 5), (5, 6), (6, 7), (7, 4),  # верх
-        (0, 4), (1, 5), (2, 6), (3, 7),  # вертикальные
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
     ]
     vertices = []
     for start, end in edges:
@@ -101,24 +101,22 @@ def fish(fish_length):
     Рыба смотрит вдоль оси +X, спина — вдоль +Y, правый бок — вдоль +Z.
     Повернуть рыбу по направлению движения — задача вершинного шейдера fish.vert.
     """
-    k = fish_length / 1.35  # исходные размеры ниже даны для рыбы длиной 1.35
+    k = fish_length / 1.35
     nose = (0.60 * k, 0.0, 0.0)
-    back = (-0.40 * k, 0.0, 0.0)  # конец тела, начало хвоста
-    # Самое широкое сечение тела — ромб из четырёх точек.
+    back = (-0.40 * k, 0.0, 0.0)
     top = (0.05 * k, 0.20 * k, 0.0)
     bottom = (0.05 * k, -0.18 * k, 0.0)
     right = (0.05 * k, 0.0, 0.12 * k)
     left = (0.05 * k, 0.0, -0.12 * k)
-    # Хвост — плоский вертикальный треугольник; видна любая его сторона.
     tail_root = (-0.35 * k, 0.0, 0.0)
     tail_top = (-0.75 * k, 0.22 * k, 0.0)
     tail_bottom = (-0.75 * k, -0.22 * k, 0.0)
 
     vertices = []
-    ring = [top, right, bottom, left, top]  # обход сечения
+    ring = [top, right, bottom, left, top]
     for current, following in zip(ring, ring[1:]):
-        vertices.extend(_triangle(nose, current, following))  # передняя половина тела
-        vertices.extend(_triangle(back, following, current))  # задняя половина тела
+        vertices.extend(_triangle(nose, current, following))
+        vertices.extend(_triangle(back, following, current))
     vertices.extend(_triangle(tail_root, tail_top, tail_bottom))
     return vertices
 
@@ -137,7 +135,7 @@ def sphere(rings, segments, point_at):
     """
     grid = []
     for i in range(rings + 1):
-        theta = math.pi * i / rings  # 0 — северный полюс, π — южный
+        theta = math.pi * i / rings
         row = []
         for j in range(segments):
             phi = 2.0 * math.pi * j / segments
@@ -148,12 +146,12 @@ def sphere(rings, segments, point_at):
     vertices = []
     for i in range(rings):
         for j in range(segments):
-            j_next = (j + 1) % segments  # последняя доля замыкается на первую
-            a, b = grid[i][j], grid[i][j_next]          # верхний пояс
-            c, d = grid[i + 1][j], grid[i + 1][j_next]  # нижний пояс
-            if i != 0:              # у северного полюса a и b совпадают
+            j_next = (j + 1) % segments
+            a, b = grid[i][j], grid[i][j_next]
+            c, d = grid[i + 1][j], grid[i + 1][j_next]
+            if i != 0:
                 vertices.extend(_triangle(a, b, d))
-            if i != rings - 1:      # у южного полюса c и d совпадают
+            if i != rings - 1:
                 vertices.extend(_triangle(a, d, c))
     return vertices
 

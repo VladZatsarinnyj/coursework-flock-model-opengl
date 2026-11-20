@@ -1,7 +1,5 @@
 #version 330 core
 
-// Вершинный шейдер без освещения: для линий и вспомогательной графики.
-
 uniform mat4 u_view;
 uniform mat4 u_projection;
 
