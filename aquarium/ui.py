@@ -58,7 +58,8 @@ class ControlPanel:
     """
 
     def __init__(self, gpu_name):
-        self.gpu_name = gpu_name
+        # Драйвер дописывает служебные сведения: «NVIDIA GeForce RTX 5050/PCIe/SSE2» → до «/» и « (».
+        self.gpu_name = gpu_name.split("/")[0].split(" (")[0].strip() or gpu_name
 
     def draw(self, view, simulation, flock, scene, camera, fps_counter):
         io = imgui.get_io()
@@ -77,7 +78,7 @@ class ControlPanel:
         if _section("Выбранная рыба", True):
             self._draw_selection(view, flock)
         if _section("Сцена", False):
-            self._draw_scene(scene)
+            self._draw_scene(scene, flock)
         if _section("Отображение", False):
             self._draw_view(view)
         if _section("Внешняя камера", False):
@@ -141,6 +142,9 @@ class ControlPanel:
     @staticmethod
     def _draw_selection(view, flock):
         count = len(flock.fish)
+        # Ползунок «Число рыб» выше в этом же кадре мог убрать выбранную рыбу:
+        # номер проверяется заново, иначе обращение к ней вызвало бы ошибку.
+        view.select_fish(view.selected_fish, count)
         current = -1 if view.selected_fish is None else view.selected_fish
         changed, index = imgui.slider_int("Номер рыбы", current, -1, count - 1)
         if changed:
@@ -177,7 +181,16 @@ class ControlPanel:
         _, view.show_all_velocities = imgui.checkbox("Векторы скорости всех рыб", view.show_all_velocities)
 
     @staticmethod
-    def _draw_scene(scene):
+    def _draw_scene(scene, flock):
+        # Готовые составы сцены из задания: удобно для демонстрации и замеров.
+        for k, (label, composition) in enumerate(config.TASK_COMPOSITIONS.items()):
+            if k > 0:
+                imgui.same_line()
+            if imgui.button(label):
+                flock.set_count(composition["fish"])
+                scene.set_seaweed_count(composition["seaweed"])
+                scene.set_rock_count(composition["rocks"])
+                scene.set_bubble_count(composition["bubbles"])
         # Если для камня не нашлось свободного места, камней станет меньше,
         # чем выбрано, и ползунок покажет фактическое число.
         changed, count = imgui.slider_int("Камни", len(scene.rocks), *config.ROCK_COUNT_RANGE)
@@ -208,3 +221,5 @@ class ControlPanel:
         if imgui.button("Сбросить камеру"):
             camera.reset()
         imgui.text_disabled("ЛКМ + движение — вращение, колесо — приближение")
+        imgui.text_disabled("Клавиши: пробел — пауза, Esc — снять выбор,")
+        imgui.text_disabled("C — камера за рыбой, R — сброс камеры, H — скрыть панель")

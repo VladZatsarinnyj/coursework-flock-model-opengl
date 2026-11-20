@@ -112,14 +112,22 @@ class Scene:
         self._move_bubbles_out_of_rocks()
 
     def _new_rock(self):
+        """Камень случайного размера в свободном месте дна.
+
+        Если для камня такого размера места не нашлось, пробуется камень меньше
+        (на ROCK_SHRINK_STEP), вплоть до минимального радиуса. Без этого при
+        15 камнях на дне иногда помещалось только 11–14.
+        """
+        min_radius = config.ROCK_RADIUS_RANGE[0]
         radius = self.random.uniform(*config.ROCK_RADIUS_RANGE)
-
-        def fits(point):
-            return self._clear_of_rocks(point, radius + config.ROCK_GAP)
-
-        point = self._find_free_point(radius + config.ROCK_WALL_MARGIN, fits)
-        if point is None:
-            return None
+        while True:
+            point = self._find_free_point(radius + config.ROCK_WALL_MARGIN,
+                                          lambda p: self._clear_of_rocks(p, radius + config.ROCK_GAP))
+            if point is not None:
+                break
+            if radius <= min_radius:
+                return None  # не поместился даже самый маленький камень
+            radius = max(min_radius, radius - config.ROCK_SHRINK_STEP)
         center = (point[0], config.ROCK_CENTER_HEIGHT * radius, point[2])
         return Rock(center, radius, self.random.choice(config.ROCK_COLORS),
                     self.random.randrange(1_000_000))

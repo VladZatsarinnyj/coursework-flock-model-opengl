@@ -90,6 +90,7 @@ ROCK_COUNT_RANGE = (0, 15)
 ROCK_RADIUS_RANGE = (0.7, 1.6)
 ROCK_CENTER_HEIGHT = 0.3     # центр сферы на 0.3 радиуса выше дна: камень высотой 1.3 радиуса
 ROCK_GAP = 0.5               # минимальный просвет между камнями
+ROCK_SHRINK_STEP = 0.2       # если камень не поместился, пробуется камень на столько меньше по радиусу
 ROCK_WALL_MARGIN = 1.2       # просвет до стекла: рыба должна проплывать между камнем и стеклом
 FISH_ROCK_PADDING = 0.4      # минимальный зазор между центром рыбы и поверхностью камня
 ROCK_ROUGHNESS = 0.07        # амплитуда неровностей формы камня (доля радиуса)
@@ -177,6 +178,12 @@ FOLLOW_LOOK_AHEAD = 4.0       # точка, куда смотрит камера
 FOLLOW_SMOOTHING = 3.0        # скорость, с которой камера догоняет поворот рыбы, 1/с
 FOLLOW_MAX_PITCH_DEG = 60.0   # наклон камеры ограничен, как у внешней камеры
 
+# Состав сцены из задания: кнопки «Минимум» и «Максимум» в разделе «Сцена».
+TASK_COMPOSITIONS = {
+    "Минимум по заданию": {"fish": 60, "seaweed": 15, "rocks": 8, "bubbles": 100},
+    "Максимум по заданию": {"fish": 120, "seaweed": 25, "rocks": 15, "bubbles": 300},
+}
+
 # --- Интерфейс ---
 FONT_SIZE = 17.0
 WALL_ALPHA_MIN = 0.0
@@ -195,6 +202,7 @@ class ViewSettings:
     show_neighbor_sphere: bool = True
     show_force_vectors: bool = True
     show_all_velocities: bool = False
+    show_panel: bool = True           # панель можно скрыть клавишей H, например для скриншота
 
     def set_wall_alpha(self, value):
         """Записывает непрозрачность, ограничивая её допустимым диапазоном."""
