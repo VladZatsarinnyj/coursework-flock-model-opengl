@@ -87,7 +87,7 @@ python main.py
 ### Режим "Добавление корма"
 ![Preview](docs/images/food.gif)
 
-*Также можно просмотреть демонстрации в [Google Drive](https://drive.google.com/file/d/1ga0rcCjIL-peki4AAfeBedfwob5RRX40/view?usp=drive_link)*
+*Также можно просмотреть демонстрации в [Google Drive](https://drive.google.com/drive/folders/1hmi0Fgue113wzDxaoWW9hhAlL-0kidsn)*
 ## Структура проекта
 
 ```
